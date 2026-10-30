@@ -1,0 +1,10 @@
+.vscode/**
+src/**
+test/**
+samples/**
+node_modules/**
+esbuild.mjs
+tsconfig.json
+package-lock.json
+SCOPES.md
+**/*.map

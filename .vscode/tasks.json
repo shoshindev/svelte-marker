@@ -1,0 +1,12 @@
+{
+  // launch.json runs this task before starting, so F5 always uses fresh code.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "npm: build",
+      "type": "npm",
+      "script": "build",
+      "problemMatcher": []
+    }
+  ]
+}

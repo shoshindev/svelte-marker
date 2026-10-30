@@ -1,0 +1,40 @@
+{
+  "name": "svelte-marker",
+  "displayName": "Svelte Marker",
+  "description": "Highlighter-style marks behind Svelte-specific syntax in .svelte files.",
+  "version": "0.0.1",
+  "publisher": "shoshindev",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:svelte"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "svelteMarker.toggle",
+        "title": "Svelte Marker: Toggle Highlighting"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/findMarks.test.ts",
+    "vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license",
+    "vscode:prepublish": "node esbuild.mjs --production"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/vscode": "1.100.0",
+    "@vscode/vsce": "4.1.0",
+    "esbuild": "0.28.2",
+    "svelte": "5.57.3",
+    "typescript": "7.0.2"
+  }
+}

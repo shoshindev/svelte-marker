@@ -1,0 +1,18 @@
+{
+  // F5 uses this. It builds the extension, then opens a second VS Code window
+  // (the Extension Development Host) with the extension loaded and samples/ open.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Svelte Marker",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/samples"
+      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build"
+    }
+  ]
+}
