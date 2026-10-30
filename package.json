@@ -1,8 +1,8 @@
 {
   "name": "svelte-marker",
   "displayName": "Svelte Marker",
-  "description": "Highlighter-style marks behind Svelte-specific syntax in .svelte files.",
-  "version": "0.0.1",
+  "description": "Highlighter-style marks behind Svelte and SvelteKit syntax in .svelte, .js and .ts files.",
+  "version": "0.0.2",
   "publisher": "shoshindev",
   "engines": {
     "vscode": "^1.100.0"
@@ -12,7 +12,9 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onLanguage:svelte"
+    "onLanguage:svelte",
+    "onLanguage:javascript",
+    "onLanguage:typescript"
   ],
   "contributes": {
     "commands": [

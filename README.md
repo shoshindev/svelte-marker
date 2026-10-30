@@ -1,10 +1,10 @@
 # Svelte Marker
 
-Paints a translucent orange highlighter mark behind Svelte-specific syntax in `.svelte` files, so you can tell it apart from plain HTML, JS and CSS at a glance. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
+Paints a translucent orange highlighter mark behind Svelte and SvelteKit syntax in `.svelte`, `.js` and `.ts` files, so you can tell it apart from plain HTML, JS and CSS at a glance. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
 
 Turn it on and off with **Svelte Marker: Toggle Highlighting** in the Command Palette. The setting survives restarts.
 
-It needs [Svelte for VS Code](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode), because that's what tells VS Code a `.svelte` file is Svelte.
+For `.svelte` files it needs [Svelte for VS Code](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode), because that's what tells VS Code a `.svelte` file is Svelte.
 
 ## What gets marked
 
@@ -14,11 +14,19 @@ It needs [Svelte for VS Code](https://marketplace.visualstudio.com/items?itemNam
 | Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const` |
 | Directives | `bind:value`, `class:active`, `use:tooltip`, `transition:fade\|global`, legacy `on:click` |
 | Special elements | `svelte:head`, `svelte:window`, `svelte:boundary`, legacy `svelte:self` |
-| SvelteKit imports | `$app/*`, `$env/*`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/kit`, `./$types` |
+| Imports | `svelte`, `svelte/*`, `$app/*`, `$env/*`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/kit`, `./$types` |
+| Imported names | `onMount`, `fade`, `redirect`, `error`, `fail`, `goto`, `page`, wherever they're used |
+| Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, only in the file types where they mean something |
+| Provided values | `params`, `url`, `cookies`, `request`, where they're listed, as in `load({ params })` |
+| Link options | `data-sveltekit-preload-data`, `data-sveltekit-reload` |
 
-The JS inside a block stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark. So do plain attributes like `onclick`.
+The JS inside a block stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark. Plain attributes like `onclick` stay unmarked too.
 
-These are Svelte-specific but aren't marked: plain `{expression}` braces, `{...spread}`, `<Component>` tags, `:global` in CSS, `<script module>`, `$store`, `$$props`, `<slot>`, imports from `svelte/*`, and `await` in markup.
+Some names stay unmarked on purpose. Names from `$lib`, `#lib`, `$env/*` and `$app/env/public` are your own code and variables, so only the import path gets a mark. A local variable that shares a name with an import, like `error` in `catch (error)`, stays unmarked too.
+
+Runes are marked in `.svelte`, `.svelte.js` and `.svelte.ts` files only, because `$state()` is an ordinary function call anywhere else.
+
+These are Svelte-specific but aren't marked: plain `{expression}` braces, `{...spread}`, `<Component>` tags, `:global` in CSS, `<script module>`, `$store`, `$props`, `<slot>`, and `await` in markup. Route names like `[slug]` and `+page` can't be marked, because they're file and folder names, not text in a file.
 
 ## Color
 
@@ -28,7 +36,9 @@ Against VS Code's six default themes, text under the marks meets the WCAG AA con
 
 ## How it works
 
-`src/findMarks.ts` uses Svelte's own parser to read the file, then walks the result to find the Svelte-specific pieces. `src/extension.ts` draws those as editor decorations, which are colored overlays that an extension can place on any text.
+`src/findMarks.ts` uses Svelte's own parser to read the file, then walks the result to find the Svelte-specific pieces. `src/svelteNames.ts` holds the hand-kept lists of runes, import paths and special exports. `src/extension.ts` draws the marks as editor decorations, which are colored overlays that an extension can place on any text.
+
+The parser only reads components, so a `.js` or `.ts` file gets wrapped in a `<script>` tag first. If that file contains the text `</script>` itself, the wrapper breaks and the file gets no marks. Ordinary JS files are skipped without being parsed, unless their name or contents mention Svelte or SvelteKit.
 
 It can't use the grammar's scopes, for the reasons in `SCOPES.md`.
 
@@ -56,12 +66,12 @@ npm test
 npm run vsix
 ```
 
-This creates `svelte-marker-0.0.1.vsix`. Install it with:
+This creates `svelte-marker-0.0.2.vsix`. Install it with:
 
 ```bash
-code --install-extension svelte-marker-0.0.1.vsix
+code --install-extension svelte-marker-0.0.2.vsix
 ```
 
 ## Updating Svelte
 
-Svelte is pinned to an exact version, because the shape of the parser's output can change between versions. After updating it, run `npm test`. One test compares the rune list in `src/findMarks.ts` with the list inside Svelte, so it fails if a new rune has appeared.
+Svelte is pinned to an exact version, because the shape of the parser's output can change between versions. After updating it, run `npm test`. One test compares the rune list in `src/svelteNames.ts` with the list inside Svelte, so it fails if a new rune has appeared.

@@ -34,9 +34,13 @@
   const loadForms = () => import('$app/forms');
   const loadTypes = () => import('./$types');
 
-  // Plain imports: these stay unmarked
+  // Imports from Svelte itself
+  import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
+
+  // Your own files stay unmarked. Names from $lib, #lib and $env stay unmarked
+  // too, because those are your code. Only the paths above get a mark.
   import './local.css';
 
   // Runes
@@ -75,6 +79,17 @@
   const words = '$state(1) in a string';
   const object = { $state() {} };
   object.$state();
+
+  // Names imported from Svelte and SvelteKit are marked wherever they're used
+  const leave = () => goto('/next');
+  onMount(() => {
+    if (browser) console.log(page.url.href);
+  });
+
+  // Here `error` is a local variable, not SvelteKit's error(), so it stays unmarked
+  function report(error) {
+    console.log(error.message);
+  }
 
   // Helpers for the markup below
   let scrollY = $state(0);
@@ -162,6 +177,9 @@
 
   <!-- A rune can also appear in the markup -->
   <a href="/" aria-current={$state.eager(page.url.pathname) === '/' ? 'page' : null}>Home</a>
+
+  <!-- SvelteKit link options -->
+  <a href="/about" data-sveltekit-preload-data="hover" data-sveltekit-reload onclick={leave}>About</a>
 </section>
 
 <!-- Directives -->

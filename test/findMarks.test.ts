@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { compile } from 'svelte/compiler';
-import { findMarks, RUNES, type Mark } from '../src/findMarks.ts';
+import { findMarks, type Mark } from '../src/findMarks.ts';
+import { RUNES, shouldScan } from '../src/svelteNames.ts';
 
 function readProjectFile(path: string): string {
   return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -14,8 +15,13 @@ function readProjectFile(path: string): string {
 const modern = readProjectFile('samples/test.svelte');
 const legacy = readProjectFile('samples/legacy.svelte');
 
-function markedText(source: string): string[] {
-  return findMarks(source).marks.map((mark) => source.slice(mark.start, mark.end));
+function markedText(source: string, filePath?: string): string[] {
+  return findMarks(source, filePath).marks.map((mark) => source.slice(mark.start, mark.end));
+}
+
+// Reads a sample and returns each piece of text it marks.
+function markedInSample(path: string): Set<string> {
+  return new Set(markedText(readProjectFile(path), path));
 }
 
 // Every mark must be inside the file, and no two may overlap: an overlap would
@@ -110,6 +116,26 @@ test('marks exactly the expected pieces of the modern sample', () => {
     '$service-worker',
     '$app/forms',
     './$types',
+
+    // Names imported from SvelteKit
+    'goto',
+    'page',
+    'browser',
+    'error',
+    'files',
+
+    // Imports from Svelte itself
+    'svelte',
+    'svelte/transition',
+    'svelte/animate',
+    'onMount',
+    'fade',
+    'fly',
+    'flip',
+
+    // SvelteKit link options
+    'data-sveltekit-preload-data',
+    'data-sveltekit-reload',
   ];
   assert.deepEqual(new Set(markedText(modern)), new Set(expected));
 });
@@ -145,11 +171,149 @@ test('leaves plain code alone', () => {
   assertUnmarked(modern, "'$state(1) in a string'");
   assertUnmarked(modern, '// These stay unmarked: this comment says $state(1)');
   assertUnmarked(modern, 'object.$state()');
-  assertUnmarked(modern, "'svelte/transition'");
+  assertUnmarked(modern, 'formatDate');
+  assertUnmarked(modern, 'SECRET_KEY');
+  assertUnmarked(modern, 'function report(error)');
+  assertUnmarked(modern, 'console.log(error.message)');
   assertUnmarked(modern, "'./local.css'");
   assertUnmarked(modern, 'count > 10');
   assertUnmarked(modern, '={count > 0}');
   assertUnmarked(modern, ':global(body)');
+});
+
+test('marks SvelteKit syntax in a server route', () => {
+  assert.deepEqual(
+    markedInSample('samples/src/routes/+page.server.js'),
+    new Set([
+      'error',
+      'fail',
+      'redirect',
+      '@sveltejs/kit',
+      '#lib/server/db.js',
+      'load',
+      'params',
+      'url',
+      'actions',
+      'request',
+      'cookies',
+      'prerender',
+    ]),
+  );
+});
+
+test('marks SvelteKit syntax in an API route', () => {
+  assert.deepEqual(
+    markedInSample('samples/src/routes/api/+server.js'),
+    new Set(['json', '@sveltejs/kit', 'GET', 'url', 'POST', 'request']),
+  );
+});
+
+test('marks hooks, but not functions that are only local', () => {
+  assert.deepEqual(
+    markedInSample('samples/src/hooks.server.js'),
+    new Set(['sequence', '@sveltejs/kit/hooks', 'handle', 'handleError', 'error']),
+  );
+});
+
+test('marks route matchers', () => {
+  assert.deepEqual(markedInSample('samples/src/params/slug.js'), new Set(['match']));
+});
+
+test('marks runes in .svelte.js files', () => {
+  assert.deepEqual(markedInSample('samples/src/lib/counter.svelte.js'), new Set(['$state', '$derived']));
+});
+
+test('runes and special exports only count in the right kind of file', () => {
+  const source = 'export function load() {}\nconst x = $state(0);';
+  assert.deepEqual(markedText(source, 'src/lib/plain.js'), []);
+  assert.deepEqual(markedText(source, 'src/routes/+page.js'), ['load']);
+  assert.deepEqual(markedText(source, 'src/lib/plain.svelte.js'), ['$state']);
+});
+
+test('a local name hides an imported one', () => {
+  const source = `import { error, goto } from '@sveltejs/kit';
+try { goto('/'); } catch (error) { console.log(error.message); }
+function first(goto) { goto(); }
+function second() { const error = 1; return error; }
+for (const goto of list) goto();
+const object = { error: 1 };
+object.error;`;
+  const marked = markedText(source, 'src/lib/plain.js');
+  assert.deepEqual(marked, ['error', 'goto', '@sveltejs/kit', 'goto']);
+});
+
+test('a block or snippet can hide an imported name', () => {
+  const source = `<script>
+  import { page } from '$app/state';
+</script>
+{page.url}
+{#each items as page}{page.title}{/each}
+{#snippet row(page)}{page.title}{/snippet}
+{#await promise then page}{page.title}{/await}`;
+  assert.equal(markedText(source).filter((text) => text === 'page').length, 2);
+});
+
+test('follows renamed imports', () => {
+  const source = "import { redirect as go } from '@sveltejs/kit';\ngo(307, '/');";
+  assert.deepEqual(markedText(source, 'a.js'), ['redirect as go', '@sveltejs/kit', 'go']);
+});
+
+test('names from your own code stay unmarked', () => {
+  const source = `import { db } from '$lib/db.js';
+import { getDate } from '#lib/dates.js';
+import { SECRET } from '$env/static/private';
+import { KEY } from '$app/env/private';
+import { dev } from '$app/env';
+db.find(getDate(SECRET, KEY, dev));`;
+  assert.deepEqual(markedText(source, 'a.js'), [
+    '$lib/db.js',
+    '#lib/dates.js',
+    '$env/static/private',
+    '$app/env/private',
+    'dev',
+    '$app/env',
+    'dev',
+  ]);
+});
+
+test('finds special exports behind TypeScript wrappers', () => {
+  const source = `export const load = (async ({ params }) => params) satisfies PageLoad;
+export const actions = { save: async ({ request }) => request } satisfies Actions;`;
+  assert.deepEqual(markedText(source, 'src/routes/+page.server.ts'), [
+    'load',
+    'params',
+    'actions',
+    'request',
+  ]);
+});
+
+test('type-only imports mark the path but not the names', () => {
+  const source = "import type { PageProps } from './$types';\nimport type { Page } from '@sveltejs/kit';";
+  assert.deepEqual(markedText(source, 'a.ts'), ['./$types', '@sveltejs/kit']);
+});
+
+test('an imported name inside a directive gets one mark', () => {
+  const source = `<script>
+  import { page } from '$app/state';
+</script>
+<p class:page>Hi</p>`;
+  assert.deepEqual(markedText(source), ['page', '$app/state', 'class:page']);
+});
+
+test('only scans files that can hold Svelte code', () => {
+  assert.equal(shouldScan('src/routes/+page.server.js', ''), true);
+  assert.equal(shouldScan('src/hooks.server.ts', ''), true);
+  assert.equal(shouldScan('src/lib/state.svelte.ts', ''), true);
+  assert.equal(shouldScan('Component.svelte', ''), true);
+  assert.equal(shouldScan('src/lib/uses-kit.js', "import '$app/state';"), true);
+  assert.equal(shouldScan('src/lib/plain.js', 'const a = 1;'), false);
+  assert.equal(shouldScan('src/app.d.ts', "import '$app/state';"), false);
+  assert.equal(shouldScan('notes.md', '$app'), false);
+  assert.equal(shouldScan('bundle.js', 'svelte'.repeat(100_000)), false);
+});
+
+test('a broken JS file gives no marks and says so', () => {
+  assert.deepEqual(findMarks('const = ;', 'src/routes/+page.js'), { marks: [], complete: false });
 });
 
 test('marks do not overlap', () => {
@@ -200,10 +364,15 @@ test('broken markup keeps the script marks', () => {
 
 // Stands in for half-typed code: every cut must give valid marks and never crash.
 test('survives being cut off at every character', () => {
-  for (const sample of [modern, legacy]) {
+  const samples = [
+    ['Component.svelte', modern],
+    ['Component.svelte', legacy],
+    ['src/routes/+page.server.js', readProjectFile('samples/src/routes/+page.server.js')],
+  ];
+  for (const [filePath, sample] of samples) {
     for (let length = 0; length <= sample.length; length++) {
       const source = sample.slice(0, length);
-      assertValidMarks(source, findMarks(source).marks);
+      assertValidMarks(source, findMarks(source, filePath).marks);
     }
   }
 });

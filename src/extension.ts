@@ -3,6 +3,10 @@
 
 import * as vscode from 'vscode';
 import { findMarks, type Mark } from './findMarks.ts';
+import { shouldScan } from './svelteNames.ts';
+
+// The kinds of file that can hold Svelte or SvelteKit code.
+const LANGUAGES = ['svelte', 'javascript', 'typescript'];
 
 // Svelte's brand orange, #FF3E00. The last two digits set the opacity: 1F is 12%
 // and 2E is 18%. Light themes get the weaker one, because a tint on white makes
@@ -13,7 +17,7 @@ const DARK_MARKER = '#FF3E002E';
 // How long to wait after a keystroke before repainting.
 const TYPING_PAUSE_MS = 150;
 
-// VS Code calls this once, the first time a Svelte file is opened.
+// VS Code calls this once, the first time a file in one of those languages opens.
 export function activate(context: vscode.ExtensionContext) {
   // A decoration type is a reusable style for overlays on the text. It sets a
   // background only, so the theme's text colors stay as they are.
@@ -36,15 +40,16 @@ export function activate(context: vscode.ExtensionContext) {
 
   function paint(editor: vscode.TextEditor, afterEdit: boolean) {
     const { document } = editor;
-    if (document.languageId !== 'svelte') return;
+    if (!LANGUAGES.includes(document.languageId)) return;
 
-    if (!enabled) {
+    const text = document.getText();
+    if (!enabled || !shouldScan(document.fileName, text)) {
       editor.setDecorations(marker, []);
       return;
     }
 
     const key = document.uri.toString();
-    const { marks, complete } = findMarks(document.getText());
+    const { marks, complete } = findMarks(text, document.fileName);
     if (complete) lastGoodMarks.set(key, marks);
 
     // Mid-typing the code is often half-written. Leave the marks alone: VS Code
@@ -79,7 +84,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Wait for a pause in typing, so we don't reparse on every keystroke.
     vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.languageId !== 'svelte' || event.contentChanges.length === 0) return;
+      if (!LANGUAGES.includes(event.document.languageId)) return;
+      if (event.contentChanges.length === 0) return;
       clearTimeout(typingTimer);
       typingTimer = setTimeout(() => paintVisibleEditors(true), TYPING_PAUSE_MS);
     }),
