@@ -8,6 +8,12 @@
 
   export let depth = 0;
 
+  $: doubled = depth * 2;
+
+  const everything = $$props;
+  const others = $$restProps;
+  const hasFooter = $$slots.footer;
+
   function go() {
     depth += 1;
   }
@@ -19,7 +25,10 @@
 
 <Child>
   <svelte:fragment slot="row">Goes into a named slot</svelte:fragment>
+  <p slot="footer">{doubled} {everything} {others} {hasFooter}</p>
 </Child>
+
+<slot name="header" {depth} />
 
 <svelte:component this={Child} />
 

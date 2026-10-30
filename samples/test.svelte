@@ -1,8 +1,10 @@
+<!-- @component A demo of every Svelte feature. -->
 <!--
   Test file for Svelte Marker. It uses every modern Svelte feature, so you can
   check the orange marks by eye. test/findMarks.test.ts checks them too.
 
-  Nothing between the "unmarked" comments near the end should be marked.
+  The rule: anything that isn't plain JS, HTML or CSS gets a mark. Nothing
+  between the "unmarked" comments near the end should be marked.
   This isn't a real SvelteKit app, so the imports don't resolve to anything.
 
   VS Code shows one yellow warning on <svelte:options>. That's expected: $host()
@@ -38,6 +40,7 @@
   import { onMount } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
+  import { writable } from 'svelte/store';
 
   // Your own files stay unmarked. Names from $lib, #lib and $env stay unmarked
   // too, because those are your code. Only the paths above get a mark.
@@ -92,6 +95,8 @@
   }
 
   // Helpers for the markup below
+  const theme = writable('light');
+  const extra = { id: 'card' };
   let scrollY = $state(0);
   let tag = $state('h2');
   let input = $state();
@@ -198,20 +203,38 @@
   </ul>
 </section>
 
+<!-- Expressions: the braces get a mark, but the JS inside doesn't -->
+<section>
+  <p title="Count: {count}">{count} {uid} {$theme}</p>
+  <button onclick={() => count++}>onclick stays unmarked, its braces don't</button>
+
+  <!-- svelte-ignore a11y_missing_content -->
+  <h1></h1>
+</section>
+
+<!-- Components -->
+<Card {title} {...extra} --card-color="tomato" />
+<Card>Inside a component</Card>
+
 <!-- unmarked:start -->
 <section class="plain" id="plain" data-note="bind:value">
   <!-- In a comment: {#if nothing} bind:value $state(1) <svelte:head> -->
-  <button onclick={() => count++} title="$state(1)">Plain onclick</button>
+  <button type="button" title="$state(1)">Plain button</button>
   <a href="/docs" target="_blank">Plain link</a>
-  <p>Text like bind:value, in: and out: is only text. {count} {uid} {$page}</p>
-  <Card title="A component" />
+  <p>Text like bind:value, in: and out: is only text.</p>
 </section>
 <!-- unmarked:end -->
 
 <style>
-  /* Nothing in CSS gets marked, not even :global */
+  /* Plain CSS stays unmarked, and so does :global in a comment */
   :global(body) {
     margin: 0;
+  }
+
+  @keyframes -global-fade-in {
+    from {
+      opacity: 0;
+    }
   }
 
   .plain {

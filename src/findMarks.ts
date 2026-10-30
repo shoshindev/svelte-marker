@@ -11,8 +11,10 @@ import { parse } from 'svelte/compiler';
 import {
   allowsRunes,
   importsOwnNames,
+  isKitTemplate,
   MARKED_IMPORT,
   RUNES,
+  SCRIPT_ATTRIBUTES,
   specialExports,
 } from './svelteNames.ts';
 
@@ -40,6 +42,7 @@ interface Node {
 // What marksIn needs to know about the text it's parsing.
 interface ParseOptions {
   offset: number; // how far the real file starts into the parsed text
+  component: boolean; // whether this is a .svelte file
   runes: boolean; // whether runes work in this file
   exportNames: string[]; // exports that mean something special in this file
 }
@@ -62,6 +65,23 @@ const TAG_NODES = new Set([
 // The Svelte syntax inside those nodes: {#if  {:else if  {:else}  {/if}  {@html
 // {let  {const  a closing }  and the words `as`, `then` and `catch`.
 const TAG_SYNTAX = /\{\s*(?:[#:@/][a-z]+(?:\s+if\b)?|const\b|let\b)(?:\s*\})?|\}|\b(?:as|then|catch)\b/g;
+
+// Function nodes. An `await` inside one is plain JS, even in the markup.
+const FUNCTION_NODES = new Set([
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunctionExpression',
+]);
+
+// The two words that turn an ordinary comment into an instruction for Svelte.
+const COMMENT_KEYWORD = /svelte-ignore\b|@component\b/;
+
+// CSS is read with patterns rather than the parser, which can't read SCSS.
+const CSS_SYNTAX = /:global\b|(?<=@keyframes\s+)-global-/g;
+const CSS_COMMENT = /\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm;
+
+// The only Svelte syntax in SvelteKit's app.html and error.html.
+const KIT_TEMPLATE_SYNTAX = /%sveltekit\.[a-zA-Z.]+%|data-sveltekit-[a-z-]+/g;
 
 const STYLE_BLOCK = /^[ \t]*<style\b[\s\S]*?<\/style\s*>/gm;
 const SCRIPT_BLOCK = /^<script\b[\s\S]*?<\/script\s*>/gm;
@@ -138,11 +158,9 @@ function declaredNames(statement: any): string[] {
 // Lists the local names a node creates for the code inside it. In
 // `catch (error) { ... }`, `error` is a local variable, not SvelteKit's error().
 function localNames(node: Node): string[] {
+  if (FUNCTION_NODES.has(node.type)) return node.params.flatMap(patternNames);
+
   switch (node.type) {
-    case 'FunctionDeclaration':
-    case 'FunctionExpression':
-    case 'ArrowFunctionExpression':
-      return node.params.flatMap(patternNames);
     case 'CatchClause':
       return patternNames(node.param);
     case 'BlockStatement':
@@ -184,6 +202,19 @@ function withoutOverlaps(marks: Mark[]): Mark[] {
   return kept;
 }
 
+// Finds `:global` and `-global-` in <style> blocks.
+function marksInStyles(source: string): Mark[] {
+  const marks: Mark[] = [];
+  for (const block of source.matchAll(STYLE_BLOCK)) {
+    const css = block[0].replace(CSS_COMMENT, blankOut);
+    for (const match of css.matchAll(CSS_SYNTAX)) {
+      const start = block.index + match.index;
+      marks.push({ start, end: start + match[0].length });
+    }
+  }
+  return marks;
+}
+
 // Parses one piece of text and returns its marks, or null if it can't be parsed.
 function marksIn(text: string, options: ParseOptions): Mark[] | null {
   let ast;
@@ -200,8 +231,12 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // Names imported from Svelte or SvelteKit, like `redirect` or `goto`.
   const ownNames = new Set<string>();
 
+  // Where the walk is. `await` is only Svelte syntax directly in the markup.
+  let inMarkup = false;
+  let functionDepth = 0;
+
   function add(start: number, end: number) {
-    if (start < end) marks.push({ start, end });
+    if (start >= 0 && start < end) marks.push({ start, end });
   }
 
   // In loose mode an unclosed block has an end of -1, meaning "never closed".
@@ -228,12 +263,73 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       position = Math.max(position, endOf(child));
     }
     markSyntaxBetween(position, endOf(node));
+
+    // The ( ) around an {#each} key aren't JS: they're part of the block's syntax.
+    if (node.key) {
+      add(text.lastIndexOf('(', node.key.start), node.key.start);
+      const closing = text.indexOf(')', node.key.end);
+      add(closing, closing + 1);
+    }
   }
 
-  // "bind:value={name}" becomes "bind:value". The "={name}" part is plain JS.
+  // Marks the two braces in {expression}. The JS between them stays unmarked.
+  // Shorthand attributes like {name} have no braces here: see markAttribute.
+  function markBraces(node: Node) {
+    const end = endOf(node);
+    if (text[node.start] !== '{' || text[end - 1] !== '}') return;
+    add(node.start, node.start + 1);
+    add(end - 1, end);
+  }
+
+  // Marks "{..." and "}" in {...rest}.
+  function markSpread(node: Node) {
+    add(node.start, node.expression.start);
+    add(endOf(node) - 1, endOf(node));
+  }
+
+  // "bind:value={name}" gets a mark on "bind:value" and on the two braces.
   function markDirective(node: Node) {
     const name = text.slice(node.start, endOf(node)).match(/^[a-z]+:[^\s=>/]+/);
-    if (name) add(node.start, node.start + name[0].length);
+    if (!name) return;
+    const nameEnd = node.start + name[0].length;
+    add(node.start, nameEnd);
+
+    // The parser gives these braces no node of their own. In shorthand like
+    // `class:active`, the expression sits inside the name, so there are none.
+    if (node.expression && node.expression.start >= nameEnd) {
+      add(text.indexOf('{', nameEnd), text.indexOf('{', nameEnd) + 1);
+      const closing = text.lastIndexOf('}', endOf(node) - 1);
+      add(closing, closing + 1);
+    }
+  }
+
+  function markAttribute(node: Node, parent?: Node) {
+    const isSpecial =
+      node.name.startsWith('data-sveltekit-') ||
+      node.name.startsWith('--') || // a CSS variable passed to a component
+      node.name === 'slot' ||
+      (parent?.type === 'Script' && SCRIPT_ATTRIBUTES.has(node.name));
+    if (isSpecial) add(node.start, node.start + node.name.length);
+
+    // Shorthand: {name} is both the attribute and its value.
+    if (text[node.start] === '{') {
+      add(node.start, node.start + 1);
+      add(endOf(node) - 1, endOf(node));
+    }
+  }
+
+  // Marks `this` and any braces in <svelte:element this={tag}>. They aren't
+  // ordinary attributes, so the parser keeps them on the element itself.
+  function markThisAttribute(node: Node, value: Node) {
+    const before = text.slice(node.start, value.start);
+    const word = before.lastIndexOf('this');
+    if (word >= 0) add(node.start + word, node.start + word + 'this'.length);
+    if (/\{\s*$/.test(before)) {
+      const opening = node.start + before.lastIndexOf('{');
+      const closing = text.indexOf('}', value.end);
+      add(opening, opening + 1);
+      add(closing, closing + 1);
+    }
   }
 
   // Marks "svelte:head" in both tags, but not the "<" and ">" around it.
@@ -291,6 +387,24 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     markProvidedValues(value);
   }
 
+  // In a component's main script, `$:` and `export` have their own meanings.
+  function markInstanceStatement(statement: Node) {
+    if (statement.type === 'LabeledStatement' && statement.label.name === '$') {
+      add(statement.label.start, text.indexOf(':', statement.label.end) + 1);
+    } else if (statement.type === 'ExportNamedDeclaration' && statement.declaration) {
+      add(statement.start, statement.start + 'export'.length);
+    }
+  }
+
+  function markCommentKeyword(start: number, end: number) {
+    const keyword = text.slice(start, end).match(COMMENT_KEYWORD);
+    if (keyword) add(start + keyword.index!, start + keyword.index! + keyword[0].length);
+  }
+
+  function isStoreName(name: string): boolean {
+    return options.component && name.length > 1 && name.startsWith('$') && !RUNES.has(name);
+  }
+
   function markSpecialExports(node: Node) {
     const declaration = node.declaration;
     if (declaration?.type === 'FunctionDeclaration') {
@@ -303,12 +417,24 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   function markNode(node: Node, hidden: Set<string>, parent?: Node, field?: string) {
     if (TAG_NODES.has(node.type)) markTagSyntax(node);
     else if (node.type.endsWith('Directive')) markDirective(node);
-    else if (node.type.startsWith('Svelte')) markElementName(node.name, node.start, endOf(node));
+    else if (node.type === 'ExpressionTag') markBraces(node);
+    else if (node.type === 'SpreadAttribute') markSpread(node);
+    else if (node.type === 'Attribute') markAttribute(node, parent);
     else if (node.type === 'CallExpression' && options.runes) markRune(node);
-    else if (node.type === 'Attribute' && node.name.startsWith('data-sveltekit-')) {
-      add(node.start, node.start + node.name.length);
-    } else if (node.type === 'Identifier' && ownNames.has(node.name)) {
-      if (!hidden.has(node.name) && isUse(parent, field)) add(node.start, node.end);
+    else if (node.type === 'Comment') markCommentKeyword(node.start, node.end);
+    else if (node.type === 'AwaitExpression') {
+      if (inMarkup && functionDepth === 0) add(node.start, node.start + 'await'.length);
+    } else if (node.type === 'Identifier') {
+      const isMarkedName = ownNames.has(node.name) || isStoreName(node.name);
+      if (isMarkedName && !hidden.has(node.name) && isUse(parent, field)) add(node.start, node.end);
+    } else if (
+      node.type.startsWith('Svelte') ||
+      node.type === 'Component' ||
+      node.type === 'SlotElement' ||
+      node.name?.startsWith('enhanced:')
+    ) {
+      markElementName(node.name, node.start, endOf(node));
+      if (node.tag ?? node.expression) markThisAttribute(node, node.tag ?? node.expression);
     }
 
     // Import, re-export and dynamic import() nodes all have a `source`.
@@ -334,9 +460,12 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       if (value.type === 'ImportDeclaration') return; // markImportedNames handled these
     }
 
+    const isFunction = FUNCTION_NODES.has(value.type);
+    if (isFunction) functionDepth++;
     for (const [childField, child] of Object.entries(value)) {
       if (!SKIPPED_FIELDS.has(childField)) visit(child, hidden, value, childField);
     }
+    if (isFunction) functionDepth--;
   }
 
   // Imports and exports can only sit at the top of a script, so read them first:
@@ -345,13 +474,28 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     for (const statement of (script?.content.body ?? []) as any[]) {
       if (statement.type === 'ImportDeclaration') markImportedNames(statement);
       if (statement.type === 'ExportNamedDeclaration') markSpecialExports(statement);
+      if (options.component && script === ast.instance) markInstanceStatement(statement);
     }
   }
 
-  // <svelte:options> is the one special element that isn't in the tree as a node.
-  if (ast.options) markElementName('svelte:options', ast.options.start, ast.options.end);
+  // <svelte:options> is the one special element that isn't in the tree as a
+  // node, and every attribute on it belongs to Svelte.
+  if (ast.options) {
+    markElementName('svelte:options', ast.options.start, ast.options.end);
+    for (const attribute of ast.options.attributes as any[]) {
+      add(attribute.start, attribute.start + attribute.name.length);
+    }
+    visit(ast.options.attributes, new Set());
+  }
+
+  // Comments in scripts aren't in the tree either. The parser lists them here.
+  if (options.component) {
+    for (const comment of (ast.comments ?? []) as any[]) markCommentKeyword(comment.start, comment.end);
+  }
+
   visit(ast.module, new Set());
   visit(ast.instance, new Set());
+  inMarkup = true;
   visit(ast.fragment, new Set());
 
   return withoutOverlaps(marks).map((mark) => ({
@@ -360,32 +504,49 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   }));
 }
 
-function findComponentMarks(source: string): MarkResult {
-  const options = { offset: 0, runes: true, exportNames: [] };
+function findComponentMarks(source: string, filePath: string): MarkResult {
+  const options = {
+    offset: 0,
+    component: true,
+    runes: true,
+    exportNames: specialExports(filePath),
+  };
+  const styles = marksInStyles(source);
 
   // Nothing in CSS gets marked, and the parser can't read SCSS, so skip it all.
   const text = source.replace(STYLE_BLOCK, blankOut);
 
   // The normal case: the whole file parses.
   const wholeFile = marksIn(text, options);
-  if (wholeFile) return { marks: wholeFile, complete: true };
+  if (wholeFile) return { marks: [...wholeFile, ...styles], complete: true };
 
   // Something is broken. Try each part alone, so an error in one doesn't lose
   // the marks in the other.
   const markup = marksIn(text.replace(SCRIPT_BLOCK, blankOut), options);
   const scripts = marksIn(keepOnlyScripts(text), options);
-  return { marks: [...(markup ?? []), ...(scripts ?? [])], complete: false };
+  return { marks: [...(markup ?? []), ...(scripts ?? []), ...styles], complete: false };
 }
 
 function findModuleMarks(source: string, filePath: string): MarkResult {
   const marks = marksIn(SCRIPT_OPENING + source + SCRIPT_CLOSING, {
     offset: SCRIPT_OPENING.length,
+    component: false,
     runes: allowsRunes(filePath),
     exportNames: specialExports(filePath),
   });
   return { marks: marks ?? [], complete: marks !== null };
 }
 
+function findTemplateMarks(source: string): MarkResult {
+  const marks = [...source.matchAll(KIT_TEMPLATE_SYNTAX)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+  return { marks, complete: true };
+}
+
 export function findMarks(source: string, filePath = 'Component.svelte'): MarkResult {
-  return filePath.endsWith('.svelte') ? findComponentMarks(source) : findModuleMarks(source, filePath);
+  if (filePath.endsWith('.svelte')) return findComponentMarks(source, filePath);
+  if (isKitTemplate(filePath)) return findTemplateMarks(source);
+  return findModuleMarks(source, filePath);
 }

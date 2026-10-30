@@ -6,7 +6,7 @@ import { findMarks, type Mark } from './findMarks.ts';
 import { shouldScan } from './svelteNames.ts';
 
 // The kinds of file that can hold Svelte or SvelteKit code.
-const LANGUAGES = ['svelte', 'javascript', 'typescript'];
+const LANGUAGES = ['svelte', 'javascript', 'typescript', 'html'];
 
 // Svelte's brand orange, #FF3E00. The last two digits set the opacity: 1F is 12%
 // and 2E is 18%. Light themes get the weaker one, because a tint on white makes

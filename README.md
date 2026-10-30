@@ -1,6 +1,8 @@
 # Svelte Marker
 
-Paints a translucent orange highlighter mark behind Svelte and SvelteKit syntax in `.svelte`, `.js` and `.ts` files, so you can tell it apart from plain HTML, JS and CSS at a glance. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
+Paints a translucent orange highlighter mark behind Svelte and SvelteKit syntax, so you can tell it apart from plain HTML, JS and CSS at a glance.
+
+The rule: if plain JS, HTML or CSS wouldn't have it, or Svelte gives it a special meaning, it gets a mark. TypeScript is the one exception: it isn't plain JS, but it isn't Svelte either, so it stays unmarked. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
 
 Turn it on and off with **Svelte Marker: Toggle Highlighting** in the Command Palette. The setting survives restarts.
 
@@ -10,23 +12,29 @@ For `.svelte` files it needs [Svelte for VS Code](https://marketplace.visualstud
 
 | Group | Examples |
 |---|---|
+| Expressions | the braces in `{count}`, `onclick={go}` and `title="{name}"`, and `{...` and `}` in `{...rest}` |
+| Components | `Card` in `<Card>` and `</Card>`, and `--size` in `<Card --size="2px">` |
 | Runes | `$state`, `$derived.by`, `$effect.pre`, `$props.id`, `$inspect(...).with` |
-| Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const` |
+| Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const`, and `await` in markup |
 | Directives | `bind:value`, `class:active`, `use:tooltip`, `transition:fade\|global`, legacy `on:click` |
-| Special elements | `svelte:head`, `svelte:window`, `svelte:boundary`, legacy `svelte:self` |
-| Imports | `svelte`, `svelte/*`, `$app/*`, `$env/*`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/kit`, `./$types` |
+| Special elements | `svelte:head`, `svelte:window`, `svelte:boundary`, `enhanced:img`, legacy `svelte:self` and `slot` |
+| Stores and legacy | `$count`, `$:`, `export let`, `$$props`, `$$restProps`, `$$slots`, `slot="row"` |
+| Comments | `svelte-ignore` and `@component` |
+| Script attributes | `module`, `generics`, legacy `context` |
+| CSS | `:global`, `-global-` |
+| Imports | `svelte`, `svelte/*`, `$app/*`, `$env/*`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/*`, `./$types` |
 | Imported names | `onMount`, `fade`, `redirect`, `error`, `fail`, `goto`, `page`, wherever they're used |
-| Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, only in the file types where they mean something |
+| Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, `snapshot`, only in the file types where they mean something |
 | Provided values | `params`, `url`, `cookies`, `request`, where they're listed, as in `load({ params })` |
-| Link options | `data-sveltekit-preload-data`, `data-sveltekit-reload` |
+| SvelteKit templates | `%sveltekit.head%`, `data-sveltekit-preload-data`, in markup and in `src/app.html` and `src/error.html` |
 
-The JS inside a block stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark. Plain attributes like `onclick` stay unmarked too.
+The JS inside stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark. Plain attributes like `onclick` stay unmarked too, though the braces in `onclick={go}` don't.
 
 Some names stay unmarked on purpose. Names from `$lib`, `#lib`, `$env/*` and `$app/env/public` are your own code and variables, so only the import path gets a mark. A local variable that shares a name with an import, like `error` in `catch (error)`, stays unmarked too.
 
 Runes are marked in `.svelte`, `.svelte.js` and `.svelte.ts` files only, because `$state()` is an ordinary function call anywhere else.
 
-These are Svelte-specific but aren't marked: plain `{expression}` braces, `{...spread}`, `<Component>` tags, `:global` in CSS, `<script module>`, `$store`, `$props`, `<slot>`, and `await` in markup. Route names like `[slug]` and `+page` can't be marked, because they're file and folder names, not text in a file.
+Route names like `[slug]` and `+page` can't be marked, because they're file and folder names, not text in a file. A value SvelteKit passes in, like `params`, is only marked where it's listed, because after that it reads like any other variable.
 
 ## Color
 
@@ -38,7 +46,7 @@ Against VS Code's six default themes, text under the marks meets the WCAG AA con
 
 `src/findMarks.ts` uses Svelte's own parser to read the file, then walks the result to find the Svelte-specific pieces. `src/svelteNames.ts` holds the hand-kept lists of runes, import paths and special exports. `src/extension.ts` draws the marks as editor decorations, which are colored overlays that an extension can place on any text.
 
-The parser only reads components, so a `.js` or `.ts` file gets wrapped in a `<script>` tag first. If that file contains the text `</script>` itself, the wrapper breaks and the file gets no marks. Ordinary JS files are skipped without being parsed, unless their name or contents mention Svelte or SvelteKit.
+The parser only reads components, so a `.js` or `.ts` file gets wrapped in a `<script>` tag first. If that file contains the text `</script>` itself, the wrapper breaks and the file gets no marks. Ordinary JS files are skipped without being parsed, unless their name or contents mention Svelte or SvelteKit. `:global` is found with a pattern rather than the parser, because the parser can't read SCSS.
 
 It can't use the grammar's scopes, for the reasons in `SCOPES.md`.
 
@@ -66,10 +74,10 @@ npm test
 npm run vsix
 ```
 
-This creates `svelte-marker-0.0.2.vsix`. Install it with:
+This creates `svelte-marker-0.0.3.vsix`. Install it with:
 
 ```bash
-code --install-extension svelte-marker-0.0.2.vsix
+code --install-extension svelte-marker-0.0.3.vsix
 ```
 
 ## Updating Svelte

@@ -128,14 +128,32 @@ test('marks exactly the expected pieces of the modern sample', () => {
     'svelte',
     'svelte/transition',
     'svelte/animate',
+    'svelte/store',
     'onMount',
     'fade',
     'fly',
     'flip',
+    'writable',
 
     // SvelteKit link options
     'data-sveltekit-preload-data',
     'data-sveltekit-reload',
+
+    // Everything else that isn't plain JS, HTML or CSS
+    '{',
+    '{...',
+    '(',
+    ')',
+    'Card',
+    '--card-color',
+    '$theme',
+    'this',
+    'module',
+    'customElement',
+    '@component',
+    'svelte-ignore',
+    ':global',
+    '-global-',
   ];
   assert.deepEqual(new Set(markedText(modern)), new Set(expected));
 });
@@ -149,8 +167,17 @@ test('marks exactly the expected pieces of the legacy sample', () => {
     'svelte:component',
     'svelte:self',
     '{#if',
+    '{',
     '}',
     '{/if}',
+    'export',
+    '$:',
+    '$$props',
+    '$$restProps',
+    '$$slots',
+    'slot',
+    'Child',
+    'this',
   ];
   assert.deepEqual(new Set(markedText(legacy)), new Set(expected));
 });
@@ -177,8 +204,10 @@ test('leaves plain code alone', () => {
   assertUnmarked(modern, 'console.log(error.message)');
   assertUnmarked(modern, "'./local.css'");
   assertUnmarked(modern, 'count > 10');
-  assertUnmarked(modern, '={count > 0}');
-  assertUnmarked(modern, ':global(body)');
+  assertUnmarked(modern, 'count > 0');
+  assertUnmarked(modern, 'onclick');
+  assertUnmarked(modern, '(body)');
+  assertUnmarked(modern, 'Plain CSS stays unmarked, and so does :global in a comment');
 });
 
 test('marks SvelteKit syntax in a server route', () => {
@@ -316,6 +345,144 @@ test('a broken JS file gives no marks and says so', () => {
   assert.deepEqual(findMarks('const = ;', 'src/routes/+page.js'), { marks: [], complete: false });
 });
 
+test('marks the braces around an expression, but not the JS inside', () => {
+  const source = '<p title="a {x} b" onclick={go} {y}>{w}</p>';
+  assert.deepEqual(markedText(source), ['{', '}', '{', '}', '{', '}', '{', '}']);
+  assertUnmarked(source, 'onclick');
+});
+
+test('marks spreads and the braces after directives', () => {
+  const source = '<p {...rest} in:fly={{ y: 8 }} class:a={b} style:c={d}></p>';
+  assert.deepEqual(markedText(source), [
+    '{...',
+    '}',
+    'in:fly',
+    '{',
+    '}',
+    'class:a',
+    '{',
+    '}',
+    'style:c',
+    '{',
+    '}',
+  ]);
+  assertUnmarked(source, '{ y: 8 }');
+});
+
+test('marks component names in both tags, and CSS variables passed to them', () => {
+  const source = '<Foo.Bar --size="2px">Hi</Foo.Bar>';
+  assert.deepEqual(markedText(source), ['Foo.Bar', '--size', 'Foo.Bar']);
+});
+
+test('marks the key brackets in an {#each}, but not brackets in JS', () => {
+  assert.deepEqual(markedText('{#each a as b (b.id)}x{/each}'), [
+    '{#each',
+    'as',
+    '(',
+    ')',
+    '}',
+    '{/each}',
+  ]);
+  assert.deepEqual(markedText('{#if (a)}x{/if}'), ['{#if', '}', '{/if}']);
+});
+
+test('marks await only directly in the markup', () => {
+  assert.deepEqual(markedText('{await x}'), ['{', 'await', '}']);
+  assert.deepEqual(markedText('{#if await x}y{/if}'), ['{#if', 'await', '}', '{/if}']);
+  assert.deepEqual(markedText('<p onclick={async () => { await x; }}>Hi</p>'), ['{', '}']);
+  assert.deepEqual(markedText('<script>await x;</script>'), []);
+});
+
+test('marks stores in components, but not in plain JS', () => {
+  assert.deepEqual(markedText('<script>$count;</script>\n{$count}'), ['$count', '{', '$count', '}']);
+  assert.deepEqual(markedText('$count;', 'src/lib/plain.js'), []);
+  assert.deepEqual(markedText('const a = object.$count;', 'a.svelte.js'), []);
+});
+
+test('marks legacy $: and export in the main script only', () => {
+  const source = '<script module>export const a = 1;</script>\n<script>export let b;\n$: c = b;</script>';
+  assert.deepEqual(markedText(source), ['module', 'export', '$:']);
+  assert.deepEqual(markedText('export const a = 1;', 'src/lib/plain.js'), []);
+});
+
+test('marks instructions in comments, but not ordinary comments', () => {
+  assert.deepEqual(markedText('<!-- @component Hi -->\n<!-- svelte-ignore a -->\n<!-- plain -->'), [
+    '@component',
+    'svelte-ignore',
+  ]);
+  assert.deepEqual(markedText('<script>// svelte-ignore a\n// plain</script>'), ['svelte-ignore']);
+  assert.deepEqual(markedText('// svelte-ignore a', 'src/lib/uses-kit.js'), []);
+});
+
+test('marks special script attributes, but not lang', () => {
+  const source = '<script lang="ts" module generics="T">const a = 1;</script>';
+  assert.deepEqual(markedText(source), ['module', 'generics']);
+  assert.deepEqual(markedText('<script context="module">const a = 1;</script>'), ['context']);
+});
+
+test('marks this and the attributes on special elements', () => {
+  assert.deepEqual(markedText('<svelte:element this={tag}>x</svelte:element>'), [
+    'svelte:element',
+    'this',
+    '{',
+    '}',
+    'svelte:element',
+  ]);
+  assert.deepEqual(markedText('<svelte:element this="h2">x</svelte:element>'), [
+    'svelte:element',
+    'this',
+    'svelte:element',
+  ]);
+  assert.deepEqual(markedText('<svelte:options runes={true} />'), ['svelte:options', 'runes', '{', '}']);
+});
+
+test('marks <slot> and <enhanced:img>', () => {
+  assert.deepEqual(markedText('<slot /><enhanced:img src="./a.jpg" />'), ['slot', 'enhanced:img']);
+});
+
+test('marks :global and -global- in styles, including SCSS', () => {
+  const source = `<style lang="scss">
+  // :global in a line comment
+  /* :global in a block comment */
+  $a: red;
+  :global(body) { color: $a; }
+  .a :global { color: $a; }
+  @keyframes -global-spin { from { color: $a; } }
+  .-global-x { color: $a; }
+</style>`;
+  assert.deepEqual(markedText(source), [':global', ':global', '-global-']);
+});
+
+test('marks placeholders in SvelteKit templates, and leaves other HTML alone', () => {
+  assert.deepEqual(
+    markedInSample('samples/src/app.html'),
+    new Set(['%sveltekit.head%', 'data-sveltekit-preload-data', '%sveltekit.body%']),
+  );
+  assert.equal(shouldScan('src/app.html', ''), true);
+  assert.equal(shouldScan('src/error.html', ''), true);
+  assert.equal(shouldScan('public/index.html', '%sveltekit.head%'), false);
+});
+
+test('marks every SvelteKit package in config files', () => {
+  assert.deepEqual(
+    markedInSample('samples/config-example.js'),
+    new Set(['adapter', '@sveltejs/adapter-auto']),
+  );
+});
+
+test('marks snapshot in a page component, but not in other components', () => {
+  assert.deepEqual(
+    markedInSample('samples/src/routes/snapshot/+page.svelte'),
+    new Set(['$state', 'export', 'snapshot', 'bind:value', '{', '}']),
+  );
+  assert.deepEqual(markedText('<script>export const snapshot = {};</script>', 'Other.svelte'), ['export']);
+});
+
+test('an unclosed {#each} never gives a bad position', () => {
+  const source = '{#each a as b (b';
+  assertValidMarks(source, findMarks(source).marks);
+});
+
 test('marks do not overlap', () => {
   assertValidMarks(modern, findMarks(modern).marks);
   assertValidMarks(legacy, findMarks(legacy).marks);
@@ -338,6 +505,8 @@ test('handles TypeScript syntax', () => {
     '$state',
     '$state.raw',
     '{#snippet',
+    '}',
+    '{',
     '}',
     '{/snippet}',
   ]);

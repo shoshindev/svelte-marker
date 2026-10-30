@@ -28,10 +28,10 @@ export const RUNES = new Set([
 // Import paths that get a mark. This includes older names like $lib and $env/*,
 // because plenty of code still uses them.
 export const MARKED_IMPORT =
-  /^(svelte|\$lib|#lib|\$app|\$env|\$service-worker|@sveltejs\/kit)(\/|$)|\/\$types(\.js)?$/;
+  /^(svelte|\$lib|#lib|\$app|\$env|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)|\/\$types(\.js)?$/;
 
 // Modules that provide Svelte's or SvelteKit's own functions and values.
-const OWN_NAMES_IMPORT = /^(svelte|\$app|\$service-worker|@sveltejs\/kit)(\/|$)/;
+const OWN_NAMES_IMPORT = /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)/;
 
 // $app/env/public and $app/env/private hold your own environment variables.
 const YOUR_VARIABLES_IMPORT = /^\$app\/env\/(private|public)$/;
@@ -63,8 +63,12 @@ const SERVER_EXPORTS = [
 ];
 const HOOK_EXPORTS = ['handle', 'handleFetch', 'handleError', 'init', 'reroute', 'transport'];
 
+// <script> attributes that plain HTML doesn't have.
+export const SCRIPT_ATTRIBUTES = new Set(['module', 'context', 'generics']);
+
 export function specialExports(filePath: string): string[] {
   const name = basename(filePath);
+  if (/^\+(page|layout)(@[^.]*)?\.svelte$/.test(name)) return ['snapshot'];
   if (/^\+page\.server\.[jt]s$/.test(name)) return [...PAGE_EXPORTS, 'actions'];
   if (/^\+(page|layout)(\.server)?\.[jt]s$/.test(name)) return PAGE_EXPORTS;
   if (/^\+server\.[jt]s$/.test(name)) return SERVER_EXPORTS;
@@ -86,8 +90,13 @@ const LARGEST_SCRIPT_FILE = 500_000;
 // A quick check, so ordinary JS files never reach the parser.
 const MENTIONS_SVELTE = /svelte|\$app|\$env|\$lib|#lib|\$types/;
 
+// SvelteKit's page templates. Any other HTML file is left alone.
+export function isKitTemplate(filePath: string): boolean {
+  return /(^|[\\/])src[\\/](app|error)\.html$/.test(filePath);
+}
+
 export function shouldScan(filePath: string, text: string): boolean {
-  if (filePath.endsWith('.svelte')) return true;
+  if (filePath.endsWith('.svelte') || isKitTemplate(filePath)) return true;
   if (!/\.(js|mjs|ts|mts)$/.test(filePath) || filePath.endsWith('.d.ts')) return false;
   if (text.length > LARGEST_SCRIPT_FILE) return false;
   return allowsRunes(filePath) || specialExports(filePath).length > 0 || MENTIONS_SVELTE.test(text);
