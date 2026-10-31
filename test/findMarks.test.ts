@@ -78,6 +78,20 @@ test('marks exactly the expected pieces of the modern sample', () => {
     '{const',
     '}',
 
+    // Names that tags create
+    ' item (item.id)',
+    ' item, index (item.id)',
+    ' value',
+    ' failure',
+    ' failed',
+    '(problem',
+    ', reset',
+    ' row',
+    '(label',
+    ', size',
+    ' children',
+    '()',
+
     // Directives
     'bind:scrollY',
     'bind:value',
@@ -108,19 +122,13 @@ test('marks exactly the expected pieces of the modern sample', () => {
     '/>',
 
     // SvelteKit imports
-    '$app/env/public',
-    '$app/navigation',
-    '$app/state',
-    '$app/env',
-    '$app/env/private',
-    '#lib/format.js',
+    '$app',
+    '#lib',
     '@sveltejs/kit',
-    '$env/static/public',
-    '$env/dynamic/private',
-    '$lib/Card.svelte',
+    '$env',
+    '$lib',
     '$service-worker',
-    '$app/forms',
-    './$types',
+    '$types',
 
     // Names imported from SvelteKit
     'goto',
@@ -131,9 +139,6 @@ test('marks exactly the expected pieces of the modern sample', () => {
 
     // Imports from Svelte itself
     'svelte',
-    'svelte/transition',
-    'svelte/animate',
-    'svelte/store',
     'onMount',
     'fade',
     'fly',
@@ -152,6 +157,7 @@ test('marks exactly the expected pieces of the modern sample', () => {
     '<Card',
     '</Card>',
     '--card-color',
+    'children',
     '$theme',
     'this',
     'module',
@@ -221,6 +227,18 @@ test('finds the end of a tag past any > in a value', () => {
   ]);
 });
 
+test('marks only the placeholder in an import path', () => {
+  const source = `import '$app/forms';
+import '#lib/a/b.js';
+import './$types.js';
+import 'svelte/store';
+import '@sveltejs/kit/hooks';
+import './other.js';
+import('$lib/c.js');`;
+  assert.deepEqual(markedText(source, 'a.js'), ['$app', '#lib', '$types', 'svelte', '@sveltejs/kit', '$lib']);
+  assert.equal(findMarks(source, 'a.js').marks[2].start, source.indexOf('$types'));
+});
+
 test('marks the brackets of a rune, but not the JS inside', () => {
   const source = '<script>let a = $state(b(1));\nlet c = $props();</script>';
   assert.deepEqual(markedText(source), ['$state', '(', ')', '$props', '(', ')']);
@@ -237,25 +255,166 @@ test('marks the brackets of a rune, but not the JS inside', () => {
   assert.deepEqual(markedText('<script>foo(); a.$state();</script>'), []);
 });
 
-test('marks the brackets in {@render} and {#snippet}, but not the JS inside', () => {
+test('marks the brackets in {@render}, but not the JS inside', () => {
   assert.deepEqual(markedText('{@render row(a)}'), ['{@render', '(', ')', '}']);
   assert.deepEqual(markedText('{@render row?.(a)}'), ['{@render', '(', ')', '}']);
+  assert.deepEqual(markedText('{foo(a)}'), ['{', '}']);
+});
+
+test('marks a whole {#snippet} tag, apart from TypeScript', () => {
   assert.deepEqual(markedText('{#snippet row(a, b = 1)}x{/snippet}'), [
     '{#snippet',
-    '(',
+    ' row',
+    '(a',
+    ', b = 1',
     ')',
     '}',
     '{/snippet}',
   ]);
-  assert.deepEqual(markedText('{#snippet row()}{/snippet}'), ['{#snippet', '(', ')', '}', '{/snippet}']);
+  assert.deepEqual(markedText('{#snippet row()}{/snippet}'), ['{#snippet', ' row', '()', '}', '{/snippet}']);
 
-  const typed = '<script lang="ts"></script>{#snippet row(run: () => void)})x{/snippet}';
-  const opening = typed.indexOf('(');
-  const closing = typed.indexOf(')}');
-  const brackets = findMarks(typed).marks.filter((mark) => '()'.includes(typed[mark.start]));
-  assert.deepEqual(brackets.map((mark) => mark.start), [opening, closing]);
+  const typed = '<script lang="ts"></script>{#snippet row(run: () => void, a: T)})x{/snippet}';
+  assert.deepEqual(markedText(typed), ['{#snippet', ' row', '(run', ', a', ')', '}', '{/snippet}']);
+});
 
-  assert.deepEqual(markedText('{foo(a)}'), ['{', '}']);
+test('marks the names and the key after {#each ... as, but not the list', () => {
+  assert.deepEqual(markedText('{#each a as b}x{/each}'), ['{#each', 'as', ' b', '}', '{/each}']);
+  assert.deepEqual(markedText('{#each a as b, i (b.id)}x{/each}'), [
+    '{#each',
+    'as',
+    ' b, i (b.id)',
+    '}',
+    '{/each}',
+  ]);
+  assert.deepEqual(markedText('{#each a as { b, c } (b)}{/each}'), [
+    '{#each',
+    'as',
+    ' { b, c } (b)',
+    '}',
+    '{/each}',
+  ]);
+  assert.deepEqual(markedText('{#each a, i}x{/each}'), ['{#each', '}', '{/each}']);
+  assert.deepEqual(markedText('{#if (a)}x{/if}'), ['{#if', '}', '{/if}']);
+});
+
+test('marks the names an {#await} block creates, but not the promise', () => {
+  assert.deepEqual(markedText('{#await a then b}x{/await}'), ['{#await', 'then', ' b', '}', '{/await}']);
+  assert.deepEqual(markedText('{#await a}x{:then b}y{:catch c}z{/await}'), [
+    '{#await',
+    '}',
+    '{:then',
+    ' b',
+    '}',
+    '{:catch',
+    ' c',
+    '}',
+    '{/await}',
+  ]);
+});
+
+test('marks children from $props, wherever it is used', () => {
+  const source = '<script>let { title, children } = $props();</script>\n{#if children}{@render children()}{/if}';
+  assert.deepEqual(markedText(source), [
+    'children',
+    '$props',
+    '(',
+    ')',
+    '{#if',
+    'children',
+    '}',
+    '{@render',
+    'children',
+    '(',
+    ')',
+    '}',
+    '{/if}',
+  ]);
+  assertUnmarked(source, 'title');
+});
+
+test('marks children, but not your own name for it', () => {
+  const source = '<script>let { children: content } = $props();</script>\n{@render content()}';
+  assert.deepEqual(markedText(source), ['children', '$props', '(', ')', '{@render', '(', ')', '}']);
+});
+
+test('finds children behind a default value, a rest element or a type', () => {
+  const withDefault = '<script>let { children = a, ...rest } = $props();</script>\n{@render children()}';
+  assert.deepEqual(markedText(withDefault), [
+    'children',
+    '$props',
+    '(',
+    ')',
+    '{@render',
+    'children',
+    '(',
+    ')',
+    '}',
+  ]);
+  const typed = '<script lang="ts">let { children }: { children: Snippet } = $props();</script>';
+  assert.deepEqual(markedText(typed), ['children', '$props', '(', ')']);
+});
+
+test('children only counts when it comes from $props', () => {
+  const other = '<script>let { children } = other();</script>\n{@render children()}';
+  assert.deepEqual(markedText(other), ['{@render', '(', ')', '}']);
+
+  const hidden = '<script>let { children } = $props();\nlet a = b.children;</script>\n{#each c as children}{children}{/each}';
+  assert.deepEqual(markedText(hidden), [
+    'children',
+    '$props',
+    '(',
+    ')',
+    '{#each',
+    'as',
+    ' children',
+    '}',
+    '{',
+    '}',
+    '{/each}',
+  ]);
+
+  assert.deepEqual(markedText('let { children } = $props();', 'a.svelte.js'), ['$props', '(', ')']);
+});
+
+test('marks the props SvelteKit passes, but only in pages and layouts', () => {
+  const source = '<script>let { data, form, params } = $props();</script>\n{data.a}{form?.b}{params.c}';
+  const inPage = ['data', 'form', 'params', '$props', '(', ')', '{', 'data', '}', '{', 'form', '}', '{', 'params', '}'];
+  assert.deepEqual(markedText(source, 'src/routes/+page.svelte'), inPage);
+  assert.deepEqual(markedText(source, 'src/routes/(app)/+page@.svelte'), inPage);
+  assert.deepEqual(markedText(source, 'src/routes/+layout.svelte'), [
+    'data',
+    '$props',
+    '(',
+    ')',
+    '{',
+    'data',
+    '}',
+    '{',
+    '}',
+    '{',
+    '}',
+  ]);
+  assert.deepEqual(markedText(source, 'src/lib/Card.svelte'), [
+    '$props',
+    '(',
+    ')',
+    '{',
+    '}',
+    '{',
+    '}',
+    '{',
+    '}',
+  ]);
+});
+
+test('your own name for a SvelteKit prop stays unmarked, and so does a local one', () => {
+  const page = 'src/routes/+page.svelte';
+  const renamed = '<script>let { data: page } = $props();</script>\n{page.a}';
+  assert.deepEqual(markedText(renamed, page), ['data', '$props', '(', ')', '{', '}']);
+  const local = '<script>let { data } = $props();\nfunction a(data) { return data; }\nb.data;</script>';
+  assert.deepEqual(markedText(local, page), ['data', '$props', '(', ')']);
+  assertValidMarks(local, findMarks(local, page).marks);
+  assert.deepEqual(markedText('<form></form>', page), []);
 });
 
 test('marks the brackets of :global, but not the selector inside', () => {
@@ -295,7 +454,7 @@ test('marks SvelteKit syntax in a server route', () => {
       'fail',
       'redirect',
       '@sveltejs/kit',
-      '#lib/server/db.js',
+      '#lib',
       'load',
       'params',
       'url',
@@ -317,7 +476,7 @@ test('marks SvelteKit syntax in an API route', () => {
 test('marks hooks, but not functions that are only local', () => {
   assert.deepEqual(
     markedInSample('samples/src/hooks.server.js'),
-    new Set(['sequence', '@sveltejs/kit/hooks', 'handle', 'handleError', 'error']),
+    new Set(['sequence', '@sveltejs/kit', 'handle', 'handleError', 'error']),
   );
 });
 
@@ -372,12 +531,12 @@ import { KEY } from '$app/env/private';
 import { dev } from '$app/env';
 db.find(getDate(SECRET, KEY, dev));`;
   assert.deepEqual(markedText(source, 'a.js'), [
-    '$lib/db.js',
-    '#lib/dates.js',
-    '$env/static/private',
-    '$app/env/private',
+    '$lib',
+    '#lib',
+    '$env',
+    '$app',
     'dev',
-    '$app/env',
+    '$app',
     'dev',
   ]);
 });
@@ -395,7 +554,7 @@ export const actions = { save: async ({ request }) => request } satisfies Action
 
 test('type-only imports mark the path but not the names', () => {
   const source = "import type { PageProps } from './$types';\nimport type { Page } from '@sveltejs/kit';";
-  assert.deepEqual(markedText(source, 'a.ts'), ['./$types', '@sveltejs/kit']);
+  assert.deepEqual(markedText(source, 'a.ts'), ['$types', '@sveltejs/kit']);
 });
 
 test('an imported name inside a directive gets one mark', () => {
@@ -403,7 +562,7 @@ test('an imported name inside a directive gets one mark', () => {
   import { page } from '$app/state';
 </script>
 <p class:page>Hi</p>`;
-  assert.deepEqual(markedText(source), ['page', '$app/state', 'class:page']);
+  assert.deepEqual(markedText(source), ['page', '$app', 'class:page']);
 });
 
 test('only scans files that can hold Svelte code', () => {
@@ -449,18 +608,6 @@ test('marks spreads and the braces after directives', () => {
 test('marks component names in both tags, and CSS variables passed to them', () => {
   const source = '<Foo.Bar --size="2px">Hi</Foo.Bar>';
   assert.deepEqual(markedText(source), ['<Foo.Bar', '--size', '>', '</Foo.Bar>']);
-});
-
-test('marks the key brackets in an {#each}, but not brackets in JS', () => {
-  assert.deepEqual(markedText('{#each a as b (b.id)}x{/each}'), [
-    '{#each',
-    'as',
-    '(',
-    ')',
-    '}',
-    '{/each}',
-  ]);
-  assert.deepEqual(markedText('{#if (a)}x{/if}'), ['{#if', '}', '{/if}']);
 });
 
 test('marks await only directly in the markup', () => {
@@ -700,15 +847,6 @@ test('runes count in any module with .svelte in its name', () => {
   assert.equal(shouldScan('src/a.svelte.test.ts', ''), true);
 });
 
-test('a plain name as an {#each} key is a use', () => {
-  const imports = "<script>import { page } from '$app/state';</script>\n";
-  const pageMarks = markedText(`${imports}{#each a as b (page)}x{/each}`).filter((text) => text === 'page');
-  assert.equal(pageMarks.length, 2);
-  assert.ok(markedText('{#each a as b ($id)}x{/each}').includes('$id'));
-  const hiddenMarks = markedText(`${imports}{#each a as page (page)}x{/each}`).filter((text) => text === 'page');
-  assert.equal(hiddenMarks.length, 1);
-});
-
 test('finds closing tags by what they say, not by a pattern', () => {
   assert.deepEqual(markedText('<Foo.$Bar>x</Foo.$Bar>'), ['<Foo.$Bar', '>', '</Foo.$Bar>']);
   assert.deepEqual(markedText('<Foo$>x</Foo$>'), ['<Foo$', '>', '</Foo$>']);
@@ -761,7 +899,7 @@ test('handles TypeScript syntax', () => {
 </script>
 {#snippet row<T>(item: T)}<p>{item}</p>{/snippet}`;
   assert.deepEqual(markedText(source), [
-    './$types',
+    '$types',
     '$state',
     '(',
     ')',
@@ -769,7 +907,8 @@ test('handles TypeScript syntax', () => {
     '(',
     ')',
     '{#snippet',
-    '(',
+    ' row',
+    '(item',
     ')',
     '}',
     '{',

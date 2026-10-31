@@ -27,8 +27,15 @@ export const RUNES = new Set([
 
 // Import paths that get a mark. This includes older names like $lib and $env/*,
 // because plenty of code still uses them.
-export const MARKED_IMPORT =
-  /^(svelte|\$lib|#lib|\$app|\$env|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)|\/\$types(\.js)?$/;
+const MARKED_IMPORT =
+  /^(svelte|\$lib|#lib|\$app|\$env|\$service-worker|@sveltejs\/[a-z-]+)(?:\/|$)|\/(\$types)(?:\.js)?$/;
+
+// The part of an import path that gets the mark: `$app` in `$app/forms` and
+// `$types` in `./$types`. What follows it is an ordinary path.
+export function markedImportPart(importPath: string): string | undefined {
+  const match = importPath.match(MARKED_IMPORT);
+  return match?.[1] ?? match?.[2];
+}
 
 // Modules that provide Svelte's or SvelteKit's own functions and values.
 const OWN_NAMES_IMPORT = /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)/;
@@ -74,6 +81,15 @@ export function specialExports(filePath: string): string[] {
   if (/^\+server\.[jt]s$/.test(name)) return SERVER_EXPORTS;
   if (/(^|[\\/])src[\\/]hooks(\.server|\.client)?\.[jt]s$/.test(filePath)) return HOOK_EXPORTS;
   if (/(^|[\\/])src[\\/]params[\\/][^\\/]+\.[jt]s$/.test(filePath)) return ['match'];
+  return [];
+}
+
+// The props SvelteKit passes to page and layout components. As with exports, the
+// file decides: in any other component, `data` is a prop you named yourself.
+export function kitProps(filePath: string): string[] {
+  const name = basename(filePath);
+  if (/^\+page(@[^.]*)?\.svelte$/.test(name)) return ['data', 'form', 'params'];
+  if (/^\+layout(@[^.]*)?\.svelte$/.test(name)) return ['data'];
   return [];
 }
 

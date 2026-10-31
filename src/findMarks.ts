@@ -12,7 +12,8 @@ import {
   allowsRunes,
   importsOwnNames,
   isKitTemplate,
-  MARKED_IMPORT,
+  kitProps,
+  markedImportPart,
   RUNES,
   SCRIPT_ATTRIBUTES,
   specialExports,
@@ -45,6 +46,7 @@ interface ParseOptions {
   component: boolean; // whether this is a .svelte file
   runes: boolean; // whether runes work in this file
   exportNames: string[]; // exports that mean something special in this file
+  propNames: string[]; // props whose names Svelte or SvelteKit fixes in this file
   styleMarks: Mark[]; // what the patterns found in <style> blocks
 }
 
@@ -221,7 +223,6 @@ function localNames(node: Node, parent?: Node): string[] {
 // `const error`, the word `error` is a label or a new name, not a use of one.
 function isUse(parent: Node | undefined, field: string | undefined): boolean {
   if (parent?.computed) return true; // o[error] and { [error]: 1 } do use it
-  if (parent?.type === 'EachBlock') return true; // its `key` is the (key) expression
   if (parent?.type === 'MemberExpression' && field === 'property') return false;
   return field !== 'key' && field !== 'id' && field !== 'label' && field !== 'exported';
 }
@@ -307,7 +308,8 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   const marks: Mark[] = [];
 
-  // Names imported from Svelte or SvelteKit, like `redirect` or `goto`.
+  // Names that belong to Svelte or SvelteKit, like an imported `redirect` or
+  // `goto`, or `children` and `data` from $props().
   const ownNames = new Set<string>();
 
   // Where the walk is. `await` is only Svelte syntax directly in the markup.
@@ -343,16 +345,33 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
     markSyntaxBetween(position, endOf(node));
 
-    // The ( ) around an {#each} key aren't JS: they're part of the block's syntax.
-    if (node.key) {
-      add(text.lastIndexOf('(', node.key.start), node.key.start);
-      const closing = text.indexOf(')', node.key.end);
-      add(closing, closing + 1);
+    if (node.type === 'EachBlock' && node.context) markEachNames(node);
+    if (node.type === 'SnippetBlock') markSnippetSignature(node);
+
+    // `then value` and `{:catch error}` create names, which plain JS has no way to
+    // write. A mark that starts at the spaces joins up with the keyword before it.
+    if (node.type === 'AwaitBlock') {
+      for (const name of [node.value, node.error]) {
+        if (name) add(afterPreviousWord(name.start), name.end);
+      }
     }
 
-    // So are the ( ) in {@render row(item)} and {#snippet row(item)}.
+    // The ( ) in {@render row(item)} can't be left out, so they're part of the tag.
     if (node.type === 'RenderTag') markCallBrackets(node.expression.expression ?? node.expression);
-    if (node.type === 'SnippetBlock') markSnippetBrackets(node);
+  }
+
+  // Steps back over any spaces before a position.
+  function afterPreviousWord(position: number): number {
+    while (/\s/.test(text[position - 1] ?? '')) position--;
+    return position;
+  }
+
+  // `as goal (goal.id)` names each item and says how to track it. Plain JS would
+  // read `goal (goal.id)` as a function call, so the whole stretch is marked.
+  function markEachNames(node: Node) {
+    const tagEnd = text.indexOf('}', (node.key ?? node.context).end);
+    const firstChildStart = node.body.nodes[0]?.start ?? endOf(node);
+    if (tagEnd >= 0 && tagEnd < firstChildStart) add(afterPreviousWord(node.context.start), tagEnd);
   }
 
   // Marks the ( ) of a call. They come after the name and any <Type>.
@@ -364,14 +383,20 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     add(closing, closing + 1);
   }
 
-  // Works back from the end of the opening tag, so that brackets in a type like
-  // `{#snippet row(run: () => void)}` aren't taken for the real ones.
-  function markSnippetBrackets(node: Node) {
+  // `row(item)` reads as a call in plain JS, but here it declares a snippet. Only
+  // TypeScript stays unmarked. This works back from the end of the opening tag, so
+  // that brackets in a type like `run: () => void` aren't taken for the real ones.
+  function markSnippetSignature(node: Node) {
     const closing = text.lastIndexOf(')', (node.body.nodes[0]?.start ?? endOf(node)) - 1);
     if (closing < node.start) return;
-    const opening = text.lastIndexOf('(', node.parameters[0]?.start ?? closing);
-    add(opening, opening + 1);
-    add(closing, closing + 1);
+    add(afterPreviousWord(node.expression.start), node.expression.end);
+
+    let position = text.lastIndexOf('(', node.parameters[0]?.start ?? closing);
+    for (const parameter of node.parameters) {
+      add(position, parameter.typeAnnotation?.start ?? parameter.end);
+      position = parameter.end;
+    }
+    add(position, closing + 1);
   }
 
   // Marks the two braces in {expression}. The JS between them stays unmarked.
@@ -514,12 +539,28 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
   }
 
+  // Svelte passes the content between a component's tags as `children`, and
+  // SvelteKit passes a page its `data`. You can't choose those names. In
+  // `{ children: content }`, `content` is your own, so only `children` gets a mark
+  // and the uses of `content` stay unmarked.
+  function markFixedProps(declaration: Node) {
+    if (withoutWrappers(declaration.init)?.callee?.name !== '$props') return;
+    for (const property of declaration.id.properties ?? []) {
+      const name = property.key?.name;
+      if (!options.propNames.includes(name)) continue;
+      add(property.key.start, property.key.end);
+      if (patternNames(property.value).includes(name)) ownNames.add(name);
+    }
+  }
+
   // In a component's main script, `$:` and `export` have their own meanings.
   function markInstanceStatement(statement: Node) {
     if (statement.type === 'LabeledStatement' && statement.label.name === '$') {
       add(statement.label.start, text.indexOf(':', statement.label.end) + 1);
     } else if (statement.type === 'ExportNamedDeclaration' && exportsValue(statement)) {
       add(statement.start, statement.start + 'export'.length);
+    } else if (statement.type === 'VariableDeclaration') {
+      for (const item of statement.declarations) markFixedProps(item);
     }
   }
 
@@ -575,8 +616,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
     // Import, re-export and dynamic import() nodes all have a `source`.
     const importPath = node.source?.value;
-    if (typeof importPath === 'string' && MARKED_IMPORT.test(importPath)) {
-      add(node.source.start + 1, node.source.end - 1); // the 1s skip the quotes
+    const importPart = typeof importPath === 'string' ? markedImportPart(importPath) : undefined;
+    if (importPart) {
+      const start = node.source.start + 1 + importPath.indexOf(importPart); // the 1 skips the quote
+      add(start, start + importPart.length);
     }
   }
 
@@ -659,6 +702,7 @@ function findComponentMarks(source: string, filePath: string): MarkResult {
     component: true,
     runes: true,
     exportNames: specialExports(filePath),
+    propNames: ['children', ...kitProps(filePath)],
     styleMarks,
   };
 
@@ -682,6 +726,7 @@ function findModuleMarks(source: string, filePath: string): MarkResult {
     component: false,
     runes: allowsRunes(filePath),
     exportNames: specialExports(filePath),
+    propNames: [],
     styleMarks: [],
   });
   return { marks: marks ?? [], complete: marks !== null };

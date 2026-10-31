@@ -47,7 +47,7 @@
   import './local.css';
 
   // Runes
-  let { title = 'Demo', score = $bindable(0), items = [] } = $props();
+  let { title = 'Demo', score = $bindable(0), items = [], children } = $props();
   const uid = $props.id();
   const host = $host();
 
@@ -175,6 +175,7 @@
   {/snippet}
 
   {@render row('Total', total)}
+  {@render children?.()}
   {@html '<strong>Trusted HTML</strong>'}
   {@debug count, user}
 
@@ -215,6 +216,7 @@
 <!-- Components -->
 <Card {title} {...extra} --card-color="tomato" />
 <Card>Inside a component</Card>
+<Card>{#snippet children()}A children snippet{/snippet}</Card>
 
 <!-- unmarked:start -->
 <section class="plain" id="plain" data-note="bind:value">
