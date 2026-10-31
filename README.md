@@ -2,7 +2,7 @@
 
 Paints a translucent violet highlighter mark behind Svelte and SvelteKit syntax, so you can tell it apart from plain HTML, JS and CSS at a glance.
 
-The rule: if plain JS, HTML or CSS wouldn't have it, or Svelte gives it a special meaning, it gets a mark. TypeScript is the one exception: it isn't plain JS, but it isn't Svelte either, so it stays unmarked. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
+The rule: if plain JS, HTML or CSS wouldn't have it, or Svelte gives it a special meaning, it gets a mark, along with the brackets that belong to it, like the `<>` in `<svelte:head>` and the `()` in `$props()`. TypeScript is the one exception: it isn't plain JS, but it isn't Svelte either, so it stays unmarked. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
 
 ## Install
 
@@ -25,22 +25,22 @@ Marks appear on their own when you open a Svelte file. Turn them on and off with
 | Group | Examples |
 |---|---|
 | Expressions | the braces in `{count}`, `onclick={go}` and `title="{name}"`, and `{...` and `}` in `{...rest}` |
-| Components | `Card` in `<Card>` and `</Card>`, and `--size` in `<Card --size="2px">` |
-| Runes | `$state`, `$derived.by`, `$effect.pre`, `$props.id`, `$inspect(...).with` |
-| Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const`, and `await` in markup |
+| Components | `<Card`, `>`, `/>` and `</Card>`, and `--size` in `<Card --size="2px">` |
+| Runes | `$state`, `$derived.by`, `$effect.pre`, `$props.id`, `$inspect(...).with`, and their `()` |
+| Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const`, the `()` in `{@render row()}`, `{#snippet row()}` and an `{#each}` key, and `await` in markup |
 | Directives | `bind:value`, `class:active`, `use:tooltip`, `transition:fade\|global`, legacy `on:click` |
-| Special elements | `svelte:head`, `svelte:window`, `svelte:boundary`, `enhanced:img`, legacy `svelte:self` and `slot` |
+| Special elements | `<svelte:head>`, `<svelte:window />`, `<svelte:boundary>`, `<enhanced:img />`, legacy `<svelte:self />` and `<slot />`, with their closing tags |
 | Stores and legacy | `$count`, `$:`, `export let`, `export { a as b }`, `$$props`, `$$restProps`, `$$slots`, `slot="row"` |
 | Comments | `svelte-ignore` and `@component`, at the start of a comment |
 | Script attributes | `module`, `generics`, legacy `context` |
-| CSS | `:global`, `-global-` |
+| CSS | `:global` and the `()` in `:global(.a)`, `-global-` |
 | Imports | `svelte`, `svelte/*`, `$app/*`, `$env/*`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/*`, `./$types` |
 | Imported names | `onMount`, `fade`, `redirect`, `error`, `fail`, `goto`, `page`, wherever they're used |
 | Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, `snapshot`, only in the file types where they mean something |
 | Provided values | `params`, `url`, `cookies`, `request`, where they're listed, as in `load({ params })` |
 | SvelteKit templates | `%sveltekit.head%`, `data-sveltekit-preload-data`, in markup and in `src/app.html` and `src/error.html` |
 
-The JS inside stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark. Plain attributes like `onclick` stay unmarked too, though the braces in `onclick={go}` don't.
+The JS inside stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark, and in `$state(0)`, the `0` stays clear. Attributes inside a Svelte tag get marks only if they're Svelte's own. Plain attributes like `onclick` stay unmarked too, though the braces in `onclick={go}` don't.
 
 Some names stay unmarked on purpose. Names from `$lib`, `#lib`, `$env/*` and `$app/env/public` are your own code and variables, so only the import path gets a mark. A local variable that shares a name with an import, like `error` in `catch (error)`, stays unmarked too.
 

@@ -264,7 +264,17 @@ function withoutOverlaps(marks: Mark[]): Mark[] {
   return kept;
 }
 
-// Finds `:global` and `-global-` in <style> blocks.
+// Finds the ) that closes the ( at `opening`, or -1 if there isn't one.
+function closingBracket(css: string, opening: number): number {
+  let depth = 0;
+  for (let index = opening; index < css.length; index++) {
+    if (css[index] === '(') depth++;
+    else if (css[index] === ')' && --depth === 0) return index;
+  }
+  return -1;
+}
+
+// Finds `:global`, the ( ) in `:global(.a)`, and `-global-` in <style> blocks.
 function marksInStyles(source: string): Mark[] {
   const marks: Mark[] = [];
   for (const block of source.matchAll(STYLE_BLOCK)) {
@@ -272,6 +282,13 @@ function marksInStyles(source: string): Mark[] {
     for (const match of css.matchAll(CSS_SYNTAX)) {
       const start = block.index + match.index;
       marks.push({ start, end: start + match[0].length });
+
+      const opening = match.index + match[0].length;
+      const closing = css[opening] === '(' ? closingBracket(css, opening) : -1;
+      if (closing >= 0) {
+        marks.push({ start: block.index + opening, end: block.index + opening + 1 });
+        marks.push({ start: block.index + closing, end: block.index + closing + 1 });
+      }
     }
   }
   return marks;
@@ -332,6 +349,29 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       const closing = text.indexOf(')', node.key.end);
       add(closing, closing + 1);
     }
+
+    // So are the ( ) in {@render row(item)} and {#snippet row(item)}.
+    if (node.type === 'RenderTag') markCallBrackets(node.expression.expression ?? node.expression);
+    if (node.type === 'SnippetBlock') markSnippetBrackets(node);
+  }
+
+  // Marks the ( ) of a call. They come after the name and any <Type>.
+  function markCallBrackets(call: Node) {
+    const closing = endOf(call) - 1;
+    if (!call.callee || text[closing] !== ')') return;
+    const opening = text.indexOf('(', (call.typeArguments ?? call.callee).end);
+    add(opening, opening + 1);
+    add(closing, closing + 1);
+  }
+
+  // Works back from the end of the opening tag, so that brackets in a type like
+  // `{#snippet row(run: () => void)}` aren't taken for the real ones.
+  function markSnippetBrackets(node: Node) {
+    const closing = text.lastIndexOf(')', (node.body.nodes[0]?.start ?? endOf(node)) - 1);
+    if (closing < node.start) return;
+    const opening = text.lastIndexOf('(', node.parameters[0]?.start ?? closing);
+    add(opening, opening + 1);
+    add(closing, closing + 1);
   }
 
   // Marks the two braces in {expression}. The JS between them stays unmarked.
@@ -393,14 +433,24 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
   }
 
-  // Marks "svelte:head" in both tags, but not the "<" and ">" around it.
-  function markElementName(name: string, start: number, end: number) {
-    add(start + 1, start + 1 + name.length);
+  // Marks "<svelte:head", the ">" or "/>" that ends it, and "</svelte:head>". The
+  // attributes in between get marks of their own.
+  function markElementTags(name: string, node: any) {
+    const end = endOf(node);
+    const openingNameEnd = node.start + '<'.length + name.length;
+    add(node.start, openingNameEnd);
+
+    // The tag ends at the first > after its last attribute. Starting from there
+    // skips any > in a value, like `this={a > b}`.
+    const parts = [...node.attributes, node.tag ?? node.expression].filter(Boolean);
+    const tagEnd = text.indexOf('>', Math.max(openingNameEnd, ...parts.map((part) => endOf(part))));
+    if (tagEnd >= 0 && tagEnd < end) add(text[tagEnd - 1] === '/' ? tagEnd - 1 : tagEnd, tagEnd + 1);
+
     const closingTag = text.lastIndexOf('</', end - 1);
     const nameStart = closingTag + '</'.length;
     const nameEnd = nameStart + name.length;
-    if (closingTag > start && text.startsWith(name, nameStart) && text.slice(nameEnd, end).trim() === '>') {
-      add(nameStart, nameEnd);
+    if (closingTag > node.start && text.startsWith(name, nameStart) && text.slice(nameEnd, end).trim() === '>') {
+      add(closingTag, end);
     }
   }
 
@@ -413,7 +463,9 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
   }
 
-  // Every rune is a function call, so `foo.$state()` and strings can't match.
+  // A rune is written like a function call, so `foo.$state()` and strings can't
+  // match. It isn't one, though: Svelte rejects a rune without its ( ), so those
+  // are marked too.
   function markRune(call: Node) {
     const callee = call.callee;
     if (RUNES.has(text.slice(callee.start, callee.end))) {
@@ -421,7 +473,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     } else if (callee.property?.name === 'with' && callee.object?.callee?.name === '$inspect') {
       // In `$inspect(x).with(fn)`, the walk reaches `$inspect` by itself.
       add(callee.property.start, callee.property.end);
+    } else {
+      return;
     }
+    markCallBrackets(call);
   }
 
   // Marks `redirect` in `import { redirect } from '@sveltejs/kit'`, and notes
@@ -513,7 +568,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       node.type === 'SlotElement' ||
       node.name?.startsWith('enhanced:')
     ) {
-      markElementName(node.name, node.start, endOf(node));
+      markElementTags(node.name, node);
       if (node.tag ?? node.expression) markThisAttribute(node, node.tag ?? node.expression);
       if (COMPONENT_NODES.has(node.type)) markSlotAttributes(node);
     }
@@ -564,7 +619,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // <svelte:options> is the one special element that isn't in the tree as a
   // node, and every attribute on it belongs to Svelte.
   if (ast.options) {
-    markElementName('svelte:options', ast.options.start, ast.options.end);
+    markElementTags('svelte:options', ast.options);
     for (const attribute of ast.options.attributes as any[]) {
       add(attribute.start, attribute.start + attribute.name.length);
     }
