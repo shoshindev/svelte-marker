@@ -77,10 +77,11 @@ export function specialExports(filePath: string): string[] {
   return [];
 }
 
-// Runes only work in components and in .svelte.js and .svelte.ts modules.
-// Anywhere else, `$state()` is just an ordinary function call.
+// Runes only work in components and in modules with .svelte in their name, like
+// a.svelte.js and a.svelte.test.ts. Anywhere else, `$state()` is just an ordinary
+// function call.
 export function allowsRunes(filePath: string): boolean {
-  return /\.svelte(\.[jt]s)?$/.test(filePath);
+  return /\.svelte((\.[^.\\/]+)*\.[jt]s)?$/.test(filePath);
 }
 
 // Very large files are almost always generated, and parsing them on every

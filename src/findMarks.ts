@@ -45,6 +45,7 @@ interface ParseOptions {
   component: boolean; // whether this is a .svelte file
   runes: boolean; // whether runes work in this file
   exportNames: string[]; // exports that mean something special in this file
+  styleMarks: Mark[]; // what the patterns found in <style> blocks
 }
 
 // Node types that have their own {...} syntax.
@@ -73,18 +74,28 @@ const FUNCTION_NODES = new Set([
   'ArrowFunctionExpression',
 ]);
 
-// The two words that turn an ordinary comment into an instruction for Svelte.
-const COMMENT_KEYWORD = /svelte-ignore\b|@component\b/;
+// The nodes that take `slot` children and CSS variables.
+const COMPONENT_NODES = new Set(['Component', 'SvelteComponent', 'SvelteSelf']);
+
+// The words that turn an ordinary comment into an instruction for Svelte. They
+// only count at the very start of a comment, and @component only in the markup.
+const MARKUP_COMMENT_KEYWORD = /(?<=^\s*)(?:svelte-ignore(?=\s)|@component\b)/;
+const SCRIPT_COMMENT_KEYWORD = /(?<=^\s*)svelte-ignore(?=\s)/;
 
 // CSS is read with patterns rather than the parser, which can't read SCSS.
-const CSS_SYNTAX = /:global\b|(?<=@keyframes\s+)-global-/g;
-const CSS_COMMENT = /\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm;
+const CSS_SYNTAX = /:global\b|(?<=@(?:-[a-z]+-)?keyframes\s+)-global-/g;
+
+// The parts of CSS to ignore: comments and strings. `url(...)` is here so that
+// the `//` in `url(http://a.b)` doesn't look like a comment.
+const CSS_NON_CODE =
+  /\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'|url\([^)]*\)|\/\/.*$/gm;
 
 // The only Svelte syntax in SvelteKit's app.html and error.html.
-const KIT_TEMPLATE_SYNTAX = /%sveltekit\.[a-zA-Z.]+%|data-sveltekit-[a-z-]+/g;
+const KIT_TEMPLATE_SYNTAX = /%sveltekit\.[\w.]+%|data-sveltekit-[a-z-]+/g;
 
-const STYLE_BLOCK = /^[ \t]*<style\b[\s\S]*?<\/style\s*>/gm;
-const SCRIPT_BLOCK = /^<script\b[\s\S]*?<\/script\s*>/gm;
+// The (?=...) stops these matching custom elements like <style-guide>.
+const STYLE_BLOCK = /^[ \t]*<style(?=[\s/>])[\s\S]*?<\/style\s*>/gm;
+const SCRIPT_BLOCK = /^<script(?=[\s/>])[\s\S]*?<\/script\s*>/gm;
 
 // Svelte's parser only reads components, so a .js or .ts file gets wrapped in
 // this tag first, which makes it look like a component with only a script.
@@ -130,14 +141,17 @@ function childrenOf(node: Node): Node[] {
   return children.sort((a, b) => a.start - b.start);
 }
 
-// Lists the names a pattern creates: `{ a, b: [c] }` creates a and c.
+// Lists the names a pattern creates: `{ a, b: [c] }` creates a and c. The parser
+// reads the pattern in `let:item={{ a, b }}` as an expression, so those count too.
 function patternNames(pattern: any): string[] {
   switch (pattern?.type) {
     case 'Identifier':
       return [pattern.name];
     case 'ObjectPattern':
+    case 'ObjectExpression':
       return pattern.properties.flatMap((item: Node) => patternNames(item.value ?? item.argument));
     case 'ArrayPattern':
+    case 'ArrayExpression':
       return pattern.elements.flatMap(patternNames);
     case 'AssignmentPattern':
       return patternNames(pattern.left);
@@ -152,26 +166,46 @@ function declaredNames(statement: any): string[] {
   if (statement?.type === 'VariableDeclaration') {
     return statement.declarations.flatMap((item: Node) => patternNames(item.id));
   }
-  return statement?.type === 'FunctionDeclaration' && statement.id ? [statement.id.name] : [];
+  const hasName = statement?.type === 'FunctionDeclaration' || statement?.type === 'ClassDeclaration';
+  return hasName ? patternNames(statement.id) : [];
+}
+
+// Lists the names a `let:` directive creates: `let:item` creates item, and
+// `let:item={row}` creates row.
+function letNames(attribute: Node): string[] {
+  if (attribute.type !== 'LetDirective') return [];
+  return attribute.expression ? patternNames(attribute.expression) : [attribute.name];
 }
 
 // Lists the local names a node creates for the code inside it. In
 // `catch (error) { ... }`, `error` is a local variable, not SvelteKit's error().
-function localNames(node: Node): string[] {
-  if (FUNCTION_NODES.has(node.type)) return node.params.flatMap(patternNames);
+function localNames(node: Node, parent?: Node): string[] {
+  // The `id` is here for `function error() {}` used as a value: inside it, `error`
+  // means that function.
+  if (FUNCTION_NODES.has(node.type)) {
+    return [...patternNames(node.id), ...node.params.flatMap(patternNames)];
+  }
 
   switch (node.type) {
+    case 'ClassExpression':
+      return patternNames(node.id);
     case 'CatchClause':
       return patternNames(node.param);
     case 'BlockStatement':
+    case 'StaticBlock':
       return node.body.flatMap(declaredNames);
+    case 'SwitchStatement':
+      return node.cases.flatMap((item: Node) => item.consequent.flatMap(declaredNames));
     case 'ForStatement':
       return declaredNames(node.init);
     case 'ForInStatement':
     case 'ForOfStatement':
       return declaredNames(node.left);
     case 'Fragment':
-      return node.nodes.flatMap((item: Node) => declaredNames(item.declaration));
+      return [
+        ...node.nodes.flatMap((item: Node) => declaredNames(item.declaration)),
+        ...(parent?.attributes ?? []).flatMap(letNames),
+      ];
     case 'EachBlock':
       return [...patternNames(node.context), node.index].filter(Boolean);
     case 'SnippetBlock':
@@ -187,8 +221,36 @@ function localNames(node: Node): string[] {
 // `const error`, the word `error` is a label or a new name, not a use of one.
 function isUse(parent: Node | undefined, field: string | undefined): boolean {
   if (parent?.computed) return true; // o[error] and { [error]: 1 } do use it
+  if (parent?.type === 'EachBlock') return true; // its `key` is the (key) expression
   if (parent?.type === 'MemberExpression' && field === 'property') return false;
   return field !== 'key' && field !== 'id' && field !== 'label' && field !== 'exported';
+}
+
+// Does this statement add a prop or method to a component? Types don't, and
+// neither do re-exports from another file.
+function exportsValue(statement: Node): boolean {
+  if (statement.exportKind === 'type' || statement.source) return false;
+  return statement.declaration || statement.specifiers.some((item: Node) => item.exportKind !== 'type');
+}
+
+// Skips past TypeScript wrappers like `{ ... } satisfies Actions`.
+function withoutWrappers(value: any): any {
+  while (value?.expression && value.type.startsWith('TS')) value = value.expression;
+  return value;
+}
+
+// Finds what a name was set to at the top of a script, so that `export { load }`
+// can be followed back to `const load = ...`.
+function topLevelValue(body: Node[], name: string): Node | null {
+  for (const statement of body) {
+    const declaration = statement.declaration ?? statement;
+    if (declaration.type === 'FunctionDeclaration' && declaration.id?.name === name) return declaration;
+    if (declaration.type === 'VariableDeclaration') {
+      const item = declaration.declarations.find((item: Node) => item.id.name === name);
+      if (item) return item.init;
+    }
+  }
+  return null;
 }
 
 // Two marks on the same text would paint the translucent color twice and look
@@ -206,7 +268,7 @@ function withoutOverlaps(marks: Mark[]): Mark[] {
 function marksInStyles(source: string): Mark[] {
   const marks: Mark[] = [];
   for (const block of source.matchAll(STYLE_BLOCK)) {
-    const css = block[0].replace(CSS_COMMENT, blankOut);
+    const css = block[0].replace(CSS_NON_CODE, blankOut);
     for (const match of css.matchAll(CSS_SYNTAX)) {
       const start = block.index + match.index;
       marks.push({ start, end: start + match[0].length });
@@ -306,8 +368,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   function markAttribute(node: Node, parent?: Node) {
     const isSpecial =
       node.name.startsWith('data-sveltekit-') ||
-      node.name.startsWith('--') || // a CSS variable passed to a component
-      node.name === 'slot' ||
+      (node.name.startsWith('--') && COMPONENT_NODES.has(parent?.type ?? '')) ||
       (parent?.type === 'Script' && SCRIPT_ATTRIBUTES.has(node.name));
     if (isSpecial) add(node.start, node.start + node.name.length);
 
@@ -335,10 +396,20 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // Marks "svelte:head" in both tags, but not the "<" and ">" around it.
   function markElementName(name: string, start: number, end: number) {
     add(start + 1, start + 1 + name.length);
-    const closingTag = text.slice(start, end).match(new RegExp(`</${name}\\s*>$`));
-    if (closingTag) {
-      const nameStart = start + closingTag.index! + 2;
-      add(nameStart, nameStart + name.length);
+    const closingTag = text.lastIndexOf('</', end - 1);
+    const nameStart = closingTag + '</'.length;
+    const nameEnd = nameStart + name.length;
+    if (closingTag > start && text.startsWith(name, nameStart) && text.slice(nameEnd, end).trim() === '>') {
+      add(nameStart, nameEnd);
+    }
+  }
+
+  // `slot` on a component's direct child fills one of its slots. Anywhere else
+  // it's plain HTML, as on the child of a custom element.
+  function markSlotAttributes(component: Node) {
+    for (const child of component.fragment.nodes) {
+      const slot = child.attributes?.find((item: Node) => item.type === 'Attribute' && item.name === 'slot');
+      if (slot) add(slot.start, slot.start + 'slot'.length);
     }
   }
 
@@ -368,36 +439,38 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // `load({ params })` is SvelteKit's. Only that one spot is marked: further
   // down, `params` reads like any other variable.
   function markProvidedValues(value: any) {
-    // Skip past TypeScript wrappers like `{ ... } satisfies Actions`.
-    while (value?.expression && value.type.startsWith('TS')) value = value.expression;
-
-    if (value?.type === 'ObjectExpression') {
-      // `actions` is an object of functions, so check each one.
-      for (const property of value.properties) markProvidedValues(property.value);
-    } else if (value?.params?.[0]?.type === 'ObjectPattern') {
-      for (const property of value.params[0].properties) {
-        if (property.key) add(property.key.start, property.key.end);
-      }
+    const params = withoutWrappers(value)?.params;
+    if (params?.[0]?.type !== 'ObjectPattern') return;
+    for (const property of params[0].properties) {
+      if (property.key) add(property.key.start, property.key.end);
     }
   }
 
   function markSpecialExport(id: Node | null, value: any) {
     if (!id || !options.exportNames.includes(id.name)) return;
     add(id.start, id.end);
-    markProvidedValues(value);
+
+    // `actions` is an object of functions, so check each one. The functions in
+    // other objects, like `snapshot`, are passed your own data.
+    if (id.name === 'actions') {
+      for (const property of withoutWrappers(value)?.properties ?? []) markProvidedValues(property.value);
+    } else {
+      markProvidedValues(value);
+    }
   }
 
   // In a component's main script, `$:` and `export` have their own meanings.
   function markInstanceStatement(statement: Node) {
     if (statement.type === 'LabeledStatement' && statement.label.name === '$') {
       add(statement.label.start, text.indexOf(':', statement.label.end) + 1);
-    } else if (statement.type === 'ExportNamedDeclaration' && statement.declaration) {
+    } else if (statement.type === 'ExportNamedDeclaration' && exportsValue(statement)) {
       add(statement.start, statement.start + 'export'.length);
     }
   }
 
-  function markCommentKeyword(start: number, end: number) {
-    const keyword = text.slice(start, end).match(COMMENT_KEYWORD);
+  // `start` is where the comment's text begins, just after its `<!--` or `//`.
+  function markCommentKeyword(start: number, comment: string, pattern: RegExp) {
+    const keyword = comment.match(pattern);
     if (keyword) add(start + keyword.index!, start + keyword.index! + keyword[0].length);
   }
 
@@ -405,12 +478,18 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     return options.component && name.length > 1 && name.startsWith('$') && !RUNES.has(name);
   }
 
-  function markSpecialExports(node: Node) {
+  function markSpecialExports(node: Node, body: Node[]) {
     const declaration = node.declaration;
     if (declaration?.type === 'FunctionDeclaration') {
       markSpecialExport(declaration.id, declaration);
     } else if (declaration?.type === 'VariableDeclaration') {
       for (const item of declaration.declarations) markSpecialExport(item.id, item.init);
+    } else if (node.exportKind !== 'type') {
+      // A list, like `export { handler as GET }`. The value is declared elsewhere.
+      for (const specifier of node.specifiers) {
+        if (specifier.exportKind === 'type') continue;
+        markSpecialExport(specifier.exported, topLevelValue(body, specifier.local.name));
+      }
     }
   }
 
@@ -421,8 +500,9 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     else if (node.type === 'SpreadAttribute') markSpread(node);
     else if (node.type === 'Attribute') markAttribute(node, parent);
     else if (node.type === 'CallExpression' && options.runes) markRune(node);
-    else if (node.type === 'Comment') markCommentKeyword(node.start, node.end);
-    else if (node.type === 'AwaitExpression') {
+    else if (node.type === 'Comment') {
+      markCommentKeyword(node.start + '<!--'.length, node.data, MARKUP_COMMENT_KEYWORD);
+    } else if (node.type === 'AwaitExpression') {
       if (inMarkup && functionDepth === 0) add(node.start, node.start + 'await'.length);
     } else if (node.type === 'Identifier') {
       const isMarkedName = ownNames.has(node.name) || isStoreName(node.name);
@@ -435,6 +515,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     ) {
       markElementName(node.name, node.start, endOf(node));
       if (node.tag ?? node.expression) markThisAttribute(node, node.tag ?? node.expression);
+      if (COMPONENT_NODES.has(node.type)) markSlotAttributes(node);
     }
 
     // Import, re-export and dynamic import() nodes all have a `source`.
@@ -454,10 +535,11 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     if (value === null || typeof value !== 'object') return;
 
     if (typeof value.type === 'string') {
-      const locals = localNames(value);
+      const locals = localNames(value, parent);
       if (locals.length > 0) hidden = new Set([...hidden, ...locals]);
       markNode(value, hidden, parent, field);
       if (value.type === 'ImportDeclaration') return; // markImportedNames handled these
+      if (value.type === 'LetDirective') return; // what's inside only creates names
     }
 
     const isFunction = FUNCTION_NODES.has(value.type);
@@ -471,9 +553,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // Imports and exports can only sit at the top of a script, so read them first:
   // the walk below needs to know the imported names before it meets their uses.
   for (const script of [ast.module, ast.instance]) {
-    for (const statement of (script?.content.body ?? []) as any[]) {
+    const body = (script?.content.body ?? []) as any[];
+    for (const statement of body) {
       if (statement.type === 'ImportDeclaration') markImportedNames(statement);
-      if (statement.type === 'ExportNamedDeclaration') markSpecialExports(statement);
+      if (statement.type === 'ExportNamedDeclaration') markSpecialExports(statement, body);
       if (options.component && script === ast.instance) markInstanceStatement(statement);
     }
   }
@@ -490,7 +573,17 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   // Comments in scripts aren't in the tree either. The parser lists them here.
   if (options.component) {
-    for (const comment of (ast.comments ?? []) as any[]) markCommentKeyword(comment.start, comment.end);
+    for (const comment of (ast.comments ?? []) as any[]) {
+      markCommentKeyword(comment.start + '//'.length, comment.value, SCRIPT_COMMENT_KEYWORD);
+    }
+  }
+
+  // Style blocks are blanked out before parsing, so a real one isn't inside any
+  // node. One in a comment, an element or a JS string is, and has no meaning.
+  const topLevelNodes = [ast.module, ast.instance, ...ast.fragment.nodes] as any[];
+  for (const { start, end } of options.styleMarks) {
+    const isInside = (node: Node) => node.start <= start && end <= endOf(node);
+    if (!topLevelNodes.some((node) => node && node.type !== 'Text' && isInside(node))) add(start, end);
   }
 
   visit(ast.module, new Set());
@@ -505,26 +598,27 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 }
 
 function findComponentMarks(source: string, filePath: string): MarkResult {
+  const styleMarks = marksInStyles(source);
   const options = {
     offset: 0,
     component: true,
     runes: true,
     exportNames: specialExports(filePath),
+    styleMarks,
   };
-  const styles = marksInStyles(source);
 
-  // Nothing in CSS gets marked, and the parser can't read SCSS, so skip it all.
+  // The parser can't read SCSS, so it never sees the style blocks.
   const text = source.replace(STYLE_BLOCK, blankOut);
 
   // The normal case: the whole file parses.
   const wholeFile = marksIn(text, options);
-  if (wholeFile) return { marks: [...wholeFile, ...styles], complete: true };
+  if (wholeFile) return { marks: wholeFile, complete: true };
 
   // Something is broken. Try each part alone, so an error in one doesn't lose
   // the marks in the other.
   const markup = marksIn(text.replace(SCRIPT_BLOCK, blankOut), options);
-  const scripts = marksIn(keepOnlyScripts(text), options);
-  return { marks: [...(markup ?? []), ...(scripts ?? []), ...styles], complete: false };
+  const scripts = marksIn(keepOnlyScripts(text), { ...options, styleMarks: [] });
+  return { marks: [...(markup ?? styleMarks), ...(scripts ?? [])], complete: false };
 }
 
 function findModuleMarks(source: string, filePath: string): MarkResult {
@@ -533,6 +627,7 @@ function findModuleMarks(source: string, filePath: string): MarkResult {
     component: false,
     runes: allowsRunes(filePath),
     exportNames: specialExports(filePath),
+    styleMarks: [],
   });
   return { marks: marks ?? [], complete: marks !== null };
 }

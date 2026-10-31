@@ -478,6 +478,171 @@ test('marks snapshot in a page component, but not in other components', () => {
   assert.deepEqual(markedText('<script>export const snapshot = {};</script>', 'Other.svelte'), ['export']);
 });
 
+test('marks env placeholders in SvelteKit templates', () => {
+  const source = '<head>%sveltekit.env.PUBLIC_API_URL% %sveltekit.env.PUBLIC_V2%</head>';
+  assert.deepEqual(markedText(source, 'src/app.html'), [
+    '%sveltekit.env.PUBLIC_API_URL%',
+    '%sveltekit.env.PUBLIC_V2%',
+  ]);
+});
+
+test('provided values are only marked in functions SvelteKit fills in', () => {
+  const snapshot = '<script>export const snapshot = { capture: () => 1, restore: ({ a, b }) => a };</script>';
+  assert.deepEqual(markedText(snapshot, 'src/routes/+page.svelte'), ['export', 'snapshot']);
+  const transport = 'export const transport = { V: { encode: (v) => v, decode: ({ x }) => x } };';
+  assert.deepEqual(markedText(transport, 'src/hooks.ts'), ['transport']);
+  const actions = 'export const actions = { ...other, save: ({ request }) => request };';
+  assert.deepEqual(markedText(actions, 'src/routes/+page.server.js'), ['actions', 'request']);
+});
+
+test('marks export only where it adds a prop or method', () => {
+  const source = `<script lang="ts">
+  let a, b;
+  export { a, b as c };
+  export { type T, a as d };
+  export type U = string;
+  export interface V {}
+  export declare const w: string;
+  export type { X };
+  export { type Y };
+  export { z } from './z';
+</script>`;
+  assert.deepEqual(markedText(source), ['export', 'export']);
+});
+
+test('finds special exports in export lists', () => {
+  const route = `const handler = ({ request }) => request;
+export { handler as GET, handler as POST, handler as other };`;
+  assert.deepEqual(markedText(route, 'src/routes/api/+server.js'), ['request', 'GET', 'POST']);
+  const page = 'const load = ({ params }) => params;\nexport { load };';
+  assert.deepEqual(markedText(page, 'src/routes/+page.js'), ['params', 'load']);
+  const reexport = "export { GET } from './shared.js';";
+  assert.deepEqual(markedText(reexport, 'src/routes/api/+server.js'), ['GET']);
+  assert.deepEqual(markedText('export type { load };\nexport { type actions };', 'src/routes/+page.server.ts'), []);
+});
+
+test('custom elements are not taken for style or script blocks', () => {
+  const styled = '<style-guide>\n<p class:a>x</p>\n</style-guide>\n<style>\n.a {}\n</style>';
+  assert.deepEqual(markedText(styled), ['class:a']);
+  const scripted = '<script-box>\n</script-box>\n<p class:a>x</p>\n<script>\nlet x = $state(\n</script>';
+  assert.equal(findMarks(scripted).complete, false);
+  assert.deepEqual(markedText(scripted), ['class:a']);
+});
+
+test('only marks CSS in the real style block', () => {
+  const css = '<style>\n  :global(a) { color: red; }\n</style>';
+  assert.deepEqual(markedText(css), [':global']);
+  assert.deepEqual(markedText(`<!--\n${css}\n-->`), []);
+  assert.deepEqual(markedText(`<svelte:head>\n${css}\n</svelte:head>`), ['svelte:head', 'svelte:head']);
+  assert.deepEqual(markedText(`<script>\nconst a = \`\n${css}\n\`;\n</script>`), []);
+});
+
+test('style marks survive broken code', () => {
+  const css = '<style>\n  :global(a) { color: red; }\n</style>';
+  const brokenScript = `<script>let x = $state(</script>\n<p class:on>Hi</p>\n${css}`;
+  assert.deepEqual(markedText(brokenScript), ['class:on', ':global']);
+  const brokenBoth = `<script>let x = $state(</script>\n<p bind:>Hi</p>\n${css}`;
+  assert.deepEqual(markedText(brokenBoth), [':global']);
+});
+
+test('leaves :global alone in CSS strings and trailing comments', () => {
+  const source = `<style lang="scss">
+  .a { color: red; } // was :global(.b)
+  .c::before { content: ":global"; }
+  [data-x=':global'] { color: red; }
+  .d { background: url(http://a.b/c.png); } :global(.e) { color: red; }
+</style>`;
+  assert.deepEqual(markedText(source), [':global']);
+});
+
+test('marks -global- after browser-prefixed keyframes', () => {
+  const source = '<style>\n@-webkit-keyframes -global-a {}\n@-moz-keyframes -global-b {}\n.-global-c {}\n</style>';
+  assert.deepEqual(markedText(source), ['-global-', '-global-']);
+});
+
+test('comment keywords only count at the start of the right kind of comment', () => {
+  assert.deepEqual(markedText('<!-- do not use svelte-ignore or @component here -->'), []);
+  assert.deepEqual(markedText('<!--\n  @component\n  Docs\n-->'), ['@component']);
+  const script = `<script>
+// TODO remove the svelte-ignore below
+/** @component is only for the markup */
+// @component
+/* svelte-ignore a */
+</script>`;
+  assert.deepEqual(markedText(script), ['svelte-ignore']);
+});
+
+test('more kinds of local name hide an imported one', () => {
+  const imports = "import { error } from '@sveltejs/kit';\n";
+  const locals = [
+    'function a(x) { switch (x) { case 1: const error = 2; return error; } }',
+    'function a() { class error {} return new error(); }',
+    'const a = function error() { return error; };',
+    'const a = class error { b() { return error; } };',
+    'class A { static { const error = 1; error; } }',
+  ];
+  for (const code of locals) {
+    assert.deepEqual(markedText(imports + code, 'a.js'), ['error', '@sveltejs/kit'], code);
+  }
+});
+
+test('a let: directive hides an imported name inside the element', () => {
+  const imports = "<script>import { page } from '$app/state';</script>\n";
+  const pageCount = (markup: string) => markedText(imports + markup).filter((text) => text === 'page').length;
+  assert.equal(pageCount('<Foo let:page>{page.x}</Foo>'), 1);
+  assert.equal(pageCount('<Foo let:a={page}>{page.x}</Foo>'), 1);
+  assert.equal(pageCount('<Foo let:a={{ page, b: [c] }}>{page.x}</Foo>'), 1);
+  assert.equal(pageCount('<Foo let:page prop={page}>x</Foo>'), 2);
+});
+
+test('runes count in any module with .svelte in its name', () => {
+  const source = 'const x = $state(0);';
+  for (const path of ['a.svelte.js', 'a.svelte.ts', 'a.svelte.test.ts', 'src/a.svelte.spec.js']) {
+    assert.deepEqual(markedText(source, path), ['$state'], path);
+  }
+  for (const path of ['a.test.ts', 'a.svelte.md', 'my.svelte/a.js']) {
+    assert.deepEqual(markedText(source, path), [], path);
+  }
+  assert.equal(shouldScan('src/a.svelte.test.ts', ''), true);
+});
+
+test('a plain name as an {#each} key is a use', () => {
+  const imports = "<script>import { page } from '$app/state';</script>\n";
+  const pageMarks = markedText(`${imports}{#each a as b (page)}x{/each}`).filter((text) => text === 'page');
+  assert.equal(pageMarks.length, 2);
+  assert.ok(markedText('{#each a as b ($id)}x{/each}').includes('$id'));
+  const hiddenMarks = markedText(`${imports}{#each a as page (page)}x{/each}`).filter((text) => text === 'page');
+  assert.equal(hiddenMarks.length, 1);
+});
+
+test('finds closing tags by what they say, not by a pattern', () => {
+  assert.deepEqual(markedText('<Foo.$Bar>x</Foo.$Bar>'), ['Foo.$Bar', 'Foo.$Bar']);
+  assert.deepEqual(markedText('<Foo$>x</Foo$>'), ['Foo$', 'Foo$']);
+  assert.deepEqual(markedText('<p><Foo></Foo></p>'), ['Foo', 'Foo']);
+  assert.deepEqual(markedText('<Foo></Foo  >'), ['Foo', 'Foo']);
+  assert.deepEqual(markedText('<Foo /><p></p>'), ['Foo']);
+  assert.deepEqual(markedText('<Foo a="</Foo>" />'), ['Foo']);
+});
+
+test('marks CSS variables only on components', () => {
+  assert.deepEqual(markedText('<div --size="2px"></div>'), []);
+  assert.deepEqual(markedText('<Foo --size="2px" />'), ['Foo', '--size']);
+  assert.deepEqual(markedText('<svelte:component this={A} --size="2px" />'), [
+    'svelte:component',
+    'this',
+    '{',
+    '}',
+    '--size',
+  ]);
+});
+
+test('marks slot only on the direct child of a component', () => {
+  assert.deepEqual(markedText('<Foo><div slot="a">x</div></Foo>'), ['Foo', 'slot', 'Foo']);
+  assert.deepEqual(markedText('<my-card><div slot="a">x</div></my-card>'), []);
+  assert.deepEqual(markedText('<Foo><my-card><div slot="a">x</div></my-card></Foo>'), ['Foo', 'Foo']);
+  assert.deepEqual(markedText('<Foo><div class:slot>x</div></Foo>'), ['Foo', 'class:slot', 'Foo']);
+});
+
 test('an unclosed {#each} never gives a bad position', () => {
   const source = '{#each a as b (b';
   assertValidMarks(source, findMarks(source).marks);

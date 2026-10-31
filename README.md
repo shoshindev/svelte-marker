@@ -18,8 +18,8 @@ For `.svelte` files it needs [Svelte for VS Code](https://marketplace.visualstud
 | Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const`, and `await` in markup |
 | Directives | `bind:value`, `class:active`, `use:tooltip`, `transition:fade\|global`, legacy `on:click` |
 | Special elements | `svelte:head`, `svelte:window`, `svelte:boundary`, `enhanced:img`, legacy `svelte:self` and `slot` |
-| Stores and legacy | `$count`, `$:`, `export let`, `$$props`, `$$restProps`, `$$slots`, `slot="row"` |
-| Comments | `svelte-ignore` and `@component` |
+| Stores and legacy | `$count`, `$:`, `export let`, `export { a as b }`, `$$props`, `$$restProps`, `$$slots`, `slot="row"` |
+| Comments | `svelte-ignore` and `@component`, at the start of a comment |
 | Script attributes | `module`, `generics`, legacy `context` |
 | CSS | `:global`, `-global-` |
 | Imports | `svelte`, `svelte/*`, `$app/*`, `$env/*`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/*`, `./$types` |
@@ -32,7 +32,7 @@ The JS inside stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a ma
 
 Some names stay unmarked on purpose. Names from `$lib`, `#lib`, `$env/*` and `$app/env/public` are your own code and variables, so only the import path gets a mark. A local variable that shares a name with an import, like `error` in `catch (error)`, stays unmarked too.
 
-Runes are marked in `.svelte`, `.svelte.js` and `.svelte.ts` files only, because `$state()` is an ordinary function call anywhere else.
+Runes are marked in `.svelte` files and in modules with `.svelte` in their name, like `.svelte.ts` and `.svelte.test.ts`, because `$state()` is an ordinary function call anywhere else.
 
 Route names like `[slug]` and `+page` can't be marked, because they're file and folder names, not text in a file. A value SvelteKit passes in, like `params`, is only marked where it's listed, because after that it reads like any other variable.
 
