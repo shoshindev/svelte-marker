@@ -8,11 +8,11 @@ import { shouldScan } from './svelteNames.ts';
 // The kinds of file that can hold Svelte or SvelteKit code.
 const LANGUAGES = ['svelte', 'javascript', 'typescript', 'html'];
 
-// Svelte's brand orange, #FF3E00. The last two digits set the opacity: 1F is 12%
-// and 2E is 18%. Light themes get the weaker one, because a tint on white makes
+// A color people can change in their settings. Its defaults are in package.json:
+// Svelte's brand orange, #FF3E00, plus two digits for the opacity. 1F is 12% and
+// 2E is 18%. Light themes get the weaker one, because a tint on white makes
 // colored text harder to read.
-const LIGHT_MARKER = '#FF3E001F';
-const DARK_MARKER = '#FF3E002E';
+const MARKER_COLOR = new vscode.ThemeColor('svelteMarker.background');
 
 // How long to wait after a keystroke before repainting.
 const TYPING_PAUSE_MS = 150;
@@ -23,8 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
   // background only, so the theme's text colors stay as they are.
   const marker = vscode.window.createTextEditorDecorationType({
     borderRadius: '3px',
-    light: { backgroundColor: LIGHT_MARKER },
-    dark: { backgroundColor: DARK_MARKER },
+    backgroundColor: MARKER_COLOR,
     // Stops a mark from stretching when you type right at its edge.
     rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
   });

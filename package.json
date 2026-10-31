@@ -2,13 +2,22 @@
   "name": "svelte-marker",
   "displayName": "Svelte Marker",
   "description": "Highlighter-style marks behind everything in a SvelteKit project that is not plain JavaScript, HTML or CSS.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "shoshindev",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shoshindev/svelte-marker.git"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
   "categories": [
     "Other"
+  ],
+  "extensionDependencies": [
+    "svelte.svelte-vscode"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -23,14 +32,26 @@
         "command": "svelteMarker.toggle",
         "title": "Svelte Marker: Toggle Highlighting"
       }
+    ],
+    "colors": [
+      {
+        "id": "svelteMarker.background",
+        "description": "Background color of the marks. Keep it translucent so the text stays readable.",
+        "defaults": {
+          "dark": "#FF3E002E",
+          "light": "#FF3E001F",
+          "highContrast": "#FF3E002E",
+          "highContrastLight": "#FF3E001F"
+        }
+      }
     ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
     "check": "tsc --noEmit",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/findMarks.test.ts",
-    "vsix": "vsce package --no-dependencies --allow-missing-repository --skip-license",
-    "vscode:prepublish": "node esbuild.mjs --production"
+    "vsix": "vsce package --no-dependencies",
+    "vscode:prepublish": "node notices.mjs && node esbuild.mjs --production"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

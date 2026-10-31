@@ -5,7 +5,10 @@ test/**
 samples/**
 node_modules/**
 esbuild.mjs
+notices.mjs
 tsconfig.json
 package-lock.json
 SCOPES.md
+CONTRIBUTING.md
+images/icon.svg
 **/*.map
