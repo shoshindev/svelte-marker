@@ -1,7 +1,7 @@
 <!-- @component A demo of every Svelte feature. -->
 <!--
   Test file for Svelte Marker. It uses every modern Svelte feature, so you can
-  check the orange marks by eye. test/findMarks.test.ts checks them too.
+  check the violet marks by eye. test/findMarks.test.ts checks them too.
 
   The rule: anything that isn't plain JS, HTML or CSS gets a mark. Nothing
   between the "unmarked" comments near the end should be marked.

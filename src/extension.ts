@@ -9,9 +9,9 @@ import { shouldScan } from './svelteNames.ts';
 const LANGUAGES = ['svelte', 'javascript', 'typescript', 'html'];
 
 // A color people can change in their settings. Its defaults are in package.json:
-// Svelte's brand orange, #FF3E00, plus two digits for the opacity. 1F is 12% and
-// 2E is 18%. Light themes get the weaker one, because a tint on white makes
-// colored text harder to read.
+// violet, #8B5CF6, plus two digits for the opacity. 2E is 18% and 42 is 26%.
+// Light themes get the weaker one, because a tint on white makes colored text
+// harder to read.
 const MARKER_COLOR = new vscode.ThemeColor('svelteMarker.background');
 
 // How long to wait after a keystroke before repainting.

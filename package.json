@@ -38,10 +38,10 @@
         "id": "svelteMarker.background",
         "description": "Background color of the marks. Keep it translucent so the text stays readable.",
         "defaults": {
-          "dark": "#FF3E002E",
-          "light": "#FF3E001F",
-          "highContrast": "#FF3E002E",
-          "highContrastLight": "#FF3E001F"
+          "dark": "#8B5CF642",
+          "light": "#8B5CF62E",
+          "highContrast": "#8B5CF642",
+          "highContrastLight": "#8B5CF62E"
         }
       }
     ]

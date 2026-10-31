@@ -1,6 +1,6 @@
 # Svelte Marker
 
-Paints a translucent orange highlighter mark behind Svelte and SvelteKit syntax, so you can tell it apart from plain HTML, JS and CSS at a glance.
+Paints a translucent violet highlighter mark behind Svelte and SvelteKit syntax, so you can tell it apart from plain HTML, JS and CSS at a glance.
 
 The rule: if plain JS, HTML or CSS wouldn't have it, or Svelte gives it a special meaning, it gets a mark. TypeScript is the one exception: it isn't plain JS, but it isn't Svelte either, so it stays unmarked. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
 
@@ -48,7 +48,7 @@ Runes are marked in `.svelte` files and in modules with `.svelte` in their name,
 
 ## Color
 
-The marks use Svelte's brand orange, `#FF3E00`, at 12% opacity on light themes and 18% on dark. To use another color, add this to your `settings.json`:
+The marks use violet, `#8B5CF6`, at 18% opacity on light themes and 26% on dark. To use another color, add this to your `settings.json`:
 
 ```json
 "workbench.colorCustomizations": {
@@ -58,7 +58,7 @@ The marks use Svelte's brand orange, `#FF3E00`, at 12% opacity on light themes a
 
 The last two digits set the opacity. Keep it low, or the mark will hide the text.
 
-Against VS Code's six default themes, text under the default marks meets the WCAG AA contrast ratio of 4.5:1 on dark themes. Light themes fall short, because no visible strength of this orange passes there. The lowest is 3.9:1, for the name after `bind:`. Other themes haven't been measured.
+Against VS Code's ten built-in themes, text under the default marks meets the WCAG AA contrast ratio of 4.5:1 only on the two high contrast themes. The lowest is 3.6:1, for `svelte-ignore` and `@component` in comments. Themes with dimmer text colors score lower.
 
 ## Known limits
 
