@@ -2,7 +2,7 @@
 
 Paints a translucent violet highlighter mark behind Svelte and SvelteKit syntax, so you can tell it apart from plain HTML, JS and CSS at a glance.
 
-The rule: if plain JS, HTML or CSS wouldn't have it, or Svelte gives it a special meaning, it gets a mark, along with the brackets that belong to it, like the `<>` in `<svelte:head>` and the `()` in `$props()`. TypeScript is the one exception: it isn't plain JS, but it isn't Svelte either, so it stays unmarked. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
+The rule: if plain JS, HTML or CSS wouldn't have it, or Svelte gives it a special meaning, it gets a mark, along with the brackets that belong to it, like the `<>` in `<svelte:head>` and the `()` in `$props()`. TypeScript isn't plain JS, but it isn't Svelte either, so it stays unmarked, apart from any name that belongs to Svelte or SvelteKit, like `Snippet`, `PageLoad` and `$$Props`. It only adds a background, so your theme's text colors stay the same and it works with any color theme.
 
 ## Install
 
@@ -28,19 +28,21 @@ Marks appear on their own when you open a Svelte file. Turn them on and off with
 | Components | `<Card`, `>`, `/>` and `</Card>`, and `--size` in `<Card --size="2px">` |
 | Runes | `$state`, `$derived.by`, `$effect.pre`, `$props.id`, `$inspect(...).with`, and their `()` |
 | Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const`, the `()` in `{@render row()}`, and `await` in markup |
-| Names a tag creates | `as goal (goal.id)`, `then value`, `{:catch error}`, the whole of `{#snippet row(item)}` |
+| Names a tag creates | `as goal (goal.id)`, `, i` in `{#each list, i}`, `then value`, `{:catch error}`, the whole of `{#snippet row(item)}` |
 | Directives | `bind:value`, `class:active`, `use:tooltip`, `transition:fade\|global`, legacy `on:click` |
-| Special elements | `<svelte:head>`, `<svelte:window />`, `<svelte:boundary>`, `<enhanced:img />`, legacy `<svelte:self />` and `<slot />`, with their closing tags |
-| Stores and legacy | `$count`, `$:`, `export let`, `export { a as b }`, `$$props`, `$$restProps`, `$$slots`, `slot="row"` |
-| Comments | `svelte-ignore` and `@component`, at the start of a comment |
+| Special elements | `<svelte:head>`, `<svelte:window />`, `<svelte:boundary>` and its `pending`, `failed` and `onerror`, `<enhanced:img />`, legacy `<svelte:self />` and `<slot />`, with their closing tags |
+| Stores and legacy | `$count`, `$:`, `export let`, `export { a as b }`, `$$props`, `$$restProps`, `$$slots`, `$$Props`, `$$Generic`, `$$Slots`, `$$Events`, `slot="row"` |
+| Comments | `svelte-ignore` at the start of a comment, `@component` anywhere in one |
 | Script attributes | `module`, `generics`, legacy `context` |
 | CSS | `:global` and the `()` in `:global(.a)`, `-global-` |
-| Imports | `svelte`, `$app`, `$env`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/kit` and other `@sveltejs/` packages, `$types`, but not the rest of the path, like `/forms` in `$app/forms` |
-| Imported names | `onMount`, `fade`, `redirect`, `error`, `fail`, `goto`, `page`, wherever they're used |
+| Imports | `svelte`, `$app`, `$env`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/kit` and other `@sveltejs/` packages, `$types`, but not the rest of the path, like `/forms` in `$app/forms`, also in `import('./$types')` in a type or JSDoc |
+| Imported names | `onMount`, `fade`, `redirect`, `error`, `fail`, `goto`, `page`, and types like `Snippet` and `PageLoad`, wherever they're used, including `kit.error()`, `export { page } from` and `await import()` |
 | Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, `snapshot`, plus `params` in `src/params.ts` and `variables` in `src/env.ts`, only in the file types where they mean something |
-| Provided values | `params`, `url`, `cookies`, `request`, where they're listed, as in `load({ params })` |
+| Fixed keys | `default` in `actions`, `capture` and `restore` in `snapshot`, `encode` and `decode` in `transport`, `transformPageChunk`, `filterSerializedResponseHeaders` and `preload` in `resolve()` |
+| Provided values | `params`, `url`, `cookies`, `request`, where they're listed, as in `load({ params })` or `wrap(({ params }) => ...)` |
 | Fixed props | `children` from `$props()`, plus `data`, `form` and `params` in `+page.svelte`, `data` and `params` in `+layout.svelte`, and `error` in `+error.svelte`, wherever they're used |
 | SvelteKit templates | `%sveltekit.head%`, `data-sveltekit-preload-data`, in markup and in `src/app.html` and `src/error.html` |
+| SvelteKit's global types | `App.Locals` in a type, and `App`, `Locals`, `PageData`, `PageState`, `Platform` and `Error` in `src/app.d.ts` |
 
 The JS inside stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark, and in `$state(0)`, the `0` stays clear. What a tag creates is different, because plain JS would read it another way: `goal (goal.id)` would be a function call. Attributes inside a Svelte tag get marks only if they're Svelte's own. Plain attributes like `onclick` stay unmarked too, though the braces in `onclick={go}` don't.
 

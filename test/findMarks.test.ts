@@ -163,6 +163,7 @@ test('marks exactly the expected pieces of the modern sample', () => {
     'children',
     '$theme',
     'this',
+    'onerror',
     'module',
     'customElement',
     '@component',
@@ -296,7 +297,8 @@ test('marks the names and the key after {#each ... as, but not the list', () => 
     '}',
     '{/each}',
   ]);
-  assert.deepEqual(markedText('{#each a, i}x{/each}'), ['{#each', '}', '{/each}']);
+  assert.deepEqual(markedText('{#each a, i}x{/each}'), ['{#each', ', i', '}', '{/each}']);
+  assert.deepEqual(markedText('{#each { length: 3 }, i }x{/each}'), ['{#each', ', i', '}', '{/each}']);
   assert.deepEqual(markedText('{#if (a)}x{/if}'), ['{#if', '}', '{/if}']);
 });
 
@@ -475,6 +477,7 @@ test('marks SvelteKit syntax in a server route', () => {
       'params',
       'url',
       'actions',
+      'default',
       'request',
       'cookies',
       'prerender',
@@ -568,9 +571,11 @@ export const actions = { save: async ({ request }) => request } satisfies Action
   ]);
 });
 
-test('type-only imports mark the path but not the names', () => {
-  const source = "import type { PageProps } from './$types';\nimport type { Page } from '@sveltejs/kit';";
-  assert.deepEqual(markedText(source, 'a.ts'), ['$types', '@sveltejs/kit']);
+test('type imports mark their names, but not the word type', () => {
+  const source = "import type { PageProps } from './$types';\nimport { type Page, error } from '@sveltejs/kit';";
+  assert.deepEqual(markedText(source, 'a.ts'), ['PageProps', '$types', 'Page', 'error', '@sveltejs/kit']);
+  assert.deepEqual(markedText("import type { Foo } from './foo';\nlet a: Foo;", 'a.ts'), []);
+  assert.deepEqual(markedText("import type { Foo } from '$lib/foo';\nlet a: Foo;", 'a.ts'), ['$lib']);
 });
 
 test('an imported name inside a directive gets one mark', () => {
@@ -588,7 +593,9 @@ test('only scans files that can hold Svelte code', () => {
   assert.equal(shouldScan('Component.svelte', ''), true);
   assert.equal(shouldScan('src/lib/uses-kit.js', "import '$app/state';"), true);
   assert.equal(shouldScan('src/lib/plain.js', 'const a = 1;'), false);
-  assert.equal(shouldScan('src/app.d.ts', "import '$app/state';"), false);
+  assert.equal(shouldScan('src/app.d.ts', ''), true);
+  assert.equal(shouldScan('src/app.d.ts', '', false), false);
+  assert.equal(shouldScan('src/other.d.ts', "import '$app/state';"), false);
   assert.equal(shouldScan('notes.md', '$app'), false);
   assert.equal(shouldScan('bundle.js', 'svelte'.repeat(100_000)), false);
 });
@@ -726,7 +733,7 @@ test('marks every SvelteKit package in config files', () => {
 test('marks snapshot in a page component, but not in other components', () => {
   assert.deepEqual(
     markedInSample('samples/src/routes/snapshot/+page.svelte'),
-    new Set(['$state', '(', ')', 'export', 'snapshot', 'bind:value', '{', '}']),
+    new Set(['$state', '(', ')', 'export', 'snapshot', 'capture', 'restore', 'bind:value', '{', '}']),
   );
   assert.deepEqual(markedText('<script>export const snapshot = {};</script>', 'Other.svelte'), ['export']);
 });
@@ -741,9 +748,9 @@ test('marks env placeholders in SvelteKit templates', () => {
 
 test('provided values are only marked in functions SvelteKit fills in', () => {
   const snapshot = '<script>export const snapshot = { capture: () => 1, restore: ({ a, b }) => a };</script>';
-  assert.deepEqual(markedText(snapshot, 'src/routes/+page.svelte'), ['export', 'snapshot']);
+  assert.deepEqual(markedText(snapshot, 'src/routes/+page.svelte'), ['export', 'snapshot', 'capture', 'restore']);
   const transport = 'export const transport = { V: { encode: (v) => v, decode: ({ x }) => x } };';
-  assert.deepEqual(markedText(transport, 'src/hooks.ts'), ['transport']);
+  assert.deepEqual(markedText(transport, 'src/hooks.ts'), ['transport', 'encode', 'decode']);
   const actions = 'export const actions = { ...other, save: ({ request }) => request };';
   assert.deepEqual(markedText(actions, 'src/routes/+page.server.js'), ['actions', 'request']);
 });
@@ -817,9 +824,10 @@ test('marks -global- after browser-prefixed keyframes', () => {
   assert.deepEqual(markedText(source), ['-global-', '-global-']);
 });
 
-test('comment keywords only count at the start of the right kind of comment', () => {
-  assert.deepEqual(markedText('<!-- do not use svelte-ignore or @component here -->'), []);
+test('svelte-ignore only counts at the start, and @component only in the markup', () => {
+  assert.deepEqual(markedText('<!-- do not use svelte-ignore or @component here -->'), ['@component']);
   assert.deepEqual(markedText('<!--\n  @component\n  Docs\n-->'), ['@component']);
+  assert.deepEqual(markedText('<!--\n  Docs\n  @component\n-->'), ['@component']);
   const script = `<script>
 // TODO remove the svelte-ignore below
 /** @component is only for the markup */
@@ -915,6 +923,7 @@ test('handles TypeScript syntax', () => {
 </script>
 {#snippet row<T>(item: T)}<p>{item}</p>{/snippet}`;
   assert.deepEqual(markedText(source), [
+    'PageProps',
     '$types',
     '$state',
     '(',
@@ -1101,14 +1110,153 @@ test('TypeScript-only code never counts as using a name', () => {
     'function a(error: string): void;\nfunction a(b: any) {}',
     'abstract class A { abstract m(error: string): void; }',
     'class A { m(error: string): void; m(b: any) {} }',
-    'class A extends B<error> {}',
-    'class A implements error {}',
     'class A { constructor(private error: string) { error; } }',
     'namespace N { const error = 1; error; }',
   ];
   for (const code of typesOnly) {
     assert.deepEqual(markedText(imports + code, 'a.ts'), ['error', '@sveltejs/kit'], code);
   }
+});
+
+test('marks the $$ names in types', () => {
+  const source = `<script lang="ts">
+  type $$Props = { a: string };
+  interface $$Slots { b: {} }
+  type Option = $$Generic;
+  let c: $$Props['a'];
+  let d: Foo<$$Events>;
+</script>`;
+  assert.deepEqual(markedText(source), ['$$Props', '$$Slots', '$$Generic', '$$Props', '$$Events']);
+  assert.deepEqual(markedText('type $$Props = {};', 'a.ts'), []);
+  assert.deepEqual(markedText('<script lang="ts">import type $Own from "./a";\nlet a: $Own;</script>'), []);
+  assert.deepEqual(markedText('<script lang="ts">let a: typeof $count;</script>'), ['$count']);
+});
+
+test('marks Svelte names used in types, and no other TypeScript', () => {
+  const source = `import type { Snippet } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
+import type { PageLoad } from './$types';
+const load: PageLoad = (a) => a as PageLoad;
+let b: { c: Snippet<[string]>; d: Own };
+let e: SvelteMap<string, number>;
+function f(g: Snippet): Snippet { return g; }
+interface H extends Snippet { i(j: Snippet): void; }
+type K = typeof SvelteMap;`;
+  const count = (name: string) => markedText(source, 'a.ts').filter((text) => text === name).length;
+  assert.equal(count('Snippet'), 6);
+  assert.equal(count('PageLoad'), 3);
+  assert.equal(count('SvelteMap'), 3);
+  for (const text of ['string', 'number', 'Own', 'H', 'K', ':']) assert.equal(count(text), 0, text);
+});
+
+test('a generic hides an imported type', () => {
+  const imports = "import type { Page } from '@sveltejs/kit';\n";
+  for (const code of ['function a<Page>(b: Page) {}', 'class A<Page> { b: Page; }', 'type A<Page> = Page;', 'interface A<Page> { b: Page }']) {
+    assert.deepEqual(markedText(imports + code, 'a.ts'), ['Page', '@sveltejs/kit'], code);
+  }
+});
+
+test('marks import paths and names in JSDoc and in types', () => {
+  const jsdoc = "/** @type {import('./$types').PageLoad} */\nexport function load() {}";
+  assert.deepEqual(markedText(jsdoc, 'src/routes/+page.js'), ['$types', 'PageLoad', 'load']);
+  assert.deepEqual(markedText("/** @type {import('@sveltejs/kit/hooks').Handle} */", 'a.js'), [
+    '@sveltejs/kit',
+    'Handle',
+  ]);
+  assert.deepEqual(markedText("/** @type {import('$lib/a').B} */", 'a.js'), ['$lib']);
+  assert.deepEqual(markedText("/** @type {import('./a').B} */", 'a.js'), []);
+  assert.deepEqual(markedText("// import('./$types').PageLoad", 'a.js'), []);
+  assert.deepEqual(markedText("let a: import('./$types').PageData;", 'a.ts'), ['$types', 'PageData']);
+  assert.deepEqual(markedText("let a: import('./own').Foo;", 'a.ts'), []);
+  assert.deepEqual(markedText("import a from './$types.d.ts';", 'a.ts'), ['a', '$types']);
+});
+
+test('finds JSDoc paths in an indented comment of several lines', () => {
+  const source = `<script>
+\t/**
+\t * @type {import('svelte').Snippet}
+\t * @type {import('./$types').PageData}
+\t */
+\tlet a;
+</script>`;
+  assert.deepEqual(markedText(source), ['svelte', 'Snippet', '$types', 'PageData']);
+  const ignored = '<script>\n\t/*\n\t  svelte-ignore a\n\t*/\n</script>';
+  assert.deepEqual(markedText(ignored), ['svelte-ignore']);
+});
+
+test('marks members of a whole imported module', () => {
+  const source = "import * as kit from '@sveltejs/kit';\nkit.error(404);\nlet a: kit.Handle;\nfunction b(kit) { kit.error(); }";
+  assert.deepEqual(markedText(source, 'a.ts'), ['* as kit', '@sveltejs/kit', 'kit', 'error', 'kit.Handle']);
+});
+
+test('marks re-exported names', () => {
+  assert.deepEqual(markedText("export { page, navigating as n } from '$app/state';", 'a.ts'), [
+    'page',
+    'navigating as n',
+    '$app',
+  ]);
+  assert.deepEqual(markedText("export { a } from './b';", 'a.ts'), []);
+});
+
+test('marks names from a dynamic import', () => {
+  const named = "const { goto } = await import('$app/navigation');\ngoto('/');";
+  assert.deepEqual(markedText(named, 'a.ts'), ['goto', '$app', 'goto']);
+  const inFunction = "async function a() {\n  const { goto } = await import('$app/navigation');\n  goto('/');\n}";
+  assert.deepEqual(markedText(inFunction, 'a.ts'), ['goto', '$app', 'goto']);
+  const whole = "const kit = await import('@sveltejs/kit');\nkit.error(404);";
+  assert.deepEqual(markedText(whole, 'a.ts'), ['kit', '@sveltejs/kit', 'kit', 'error']);
+  assert.deepEqual(markedText("import('svelte/store').then(({ get }) => get(a));", 'a.ts'), ['svelte', 'get']);
+  assert.deepEqual(markedText("const { a } = await import('./b');\na();", 'a.ts'), []);
+});
+
+test('marks the keys SvelteKit knows by name', () => {
+  const actions = 'export const actions = { default: async () => {}, other: async () => {} };';
+  assert.deepEqual(markedText(actions, 'src/routes/+page.server.ts'), ['actions', 'default']);
+  const handle = `export const handle = ({ event, resolve }) => resolve(event, {
+  transformPageChunk: ({ html }) => html,
+  filterSerializedResponseHeaders: () => true,
+  preload: () => true,
+  other: 1,
+});`;
+  assert.deepEqual(markedText(handle, 'src/hooks.server.ts'), [
+    'handle',
+    'event',
+    'resolve',
+    'transformPageChunk',
+    'filterSerializedResponseHeaders',
+    'preload',
+  ]);
+  assert.deepEqual(markedText('resolve(a, { preload: 1 });', 'src/lib/a.svelte.ts'), []);
+});
+
+test('marks provided values inside a wrapper', () => {
+  const load = 'export const load = wrap(async ({ params }) => params);';
+  assert.deepEqual(markedText(load, 'src/routes/+page.ts'), ['load', 'params']);
+  const actions = 'export const actions = wrap({ save: async ({ request }) => request });';
+  assert.deepEqual(markedText(actions, 'src/routes/+page.server.ts'), ['actions', 'request']);
+  const hooks = 'export const handle = sequence(({ event, resolve }) => resolve(event), other);';
+  assert.deepEqual(markedText(hooks, 'src/hooks.server.ts'), ['handle', 'event', 'resolve']);
+});
+
+test('marks the props of svelte:boundary', () => {
+  const source = '<svelte:boundary onerror={a} pending={b} failed={c}>d</svelte:boundary><div onerror={a}></div>';
+  assert.deepEqual(markedText(source).filter((text) => /^[a-z]+$/.test(text)), ['onerror', 'pending', 'failed']);
+  assert.deepEqual(markedText('<svelte:boundary {onerror} />'), ['<svelte:boundary', '{', 'onerror', '}', '/>']);
+});
+
+test('marks the App namespace', () => {
+  const declaration = `declare global {
+  namespace App {
+    interface Locals { a: string }
+    interface PageData {}
+    interface Other {}
+  }
+}
+export {};`;
+  assert.deepEqual(markedText(declaration, 'src/app.d.ts'), ['App', 'Locals', 'PageData']);
+  assert.deepEqual(markedText('let a: App.Locals;\nlet b: App;', 'src/lib/a.ts'), ['App.Locals']);
+  assert.equal(shouldScan('src/lib/a.ts', 'let a: App.Locals;'), true);
+  assert.deepEqual(findMarks('let a: App.Locals;', 'a.ts', false).marks, []);
 });
 
 test('reads the longer ways of asking for TypeScript', () => {

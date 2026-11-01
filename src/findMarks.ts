@@ -9,14 +9,19 @@
 
 import { parse } from 'svelte/compiler';
 import {
+  ACTION_KEYS,
   allowsRunes,
+  APP_TYPES,
   importsOwnNames,
   isKitTemplate,
   kitProps,
   markedImportPart,
+  RESOLVE_KEYS,
   RUNES,
   SCRIPT_ATTRIBUTES,
+  SNAPSHOT_KEYS,
   specialExports,
+  TRANSPORT_KEYS,
 } from './svelteNames.ts';
 
 // One highlighter stroke, as character offsets into the file.
@@ -48,6 +53,7 @@ interface ParseOptions {
   exportNames: string[]; // exports that mean something special in this file
   propNames: string[]; // props whose names Svelte or SvelteKit fixes in this file
   styleMarks: Mark[]; // what the patterns found in <style> blocks
+  inKitProject: boolean; // whether SvelteKit's global `App` types exist here
 }
 
 // Node types that have their own {...} syntax.
@@ -79,10 +85,14 @@ const FUNCTION_NODES = new Set([
 // The nodes that take `slot` children and CSS variables.
 const COMPONENT_NODES = new Set(['Component', 'SvelteComponent', 'SvelteSelf']);
 
-// The words that turn an ordinary comment into an instruction for Svelte. They
-// only count at the very start of a comment, and @component only in the markup.
-const MARKUP_COMMENT_KEYWORD = /(?<=^\s*)(?:svelte-ignore(?=\s)|@component\b)/;
+// The words that turn an ordinary comment into an instruction for Svelte.
+// svelte-ignore only counts at the very start of a comment. @component only counts
+// in the markup, but anywhere in the comment: that's how the Svelte tools read it.
+const MARKUP_COMMENT_KEYWORD = /(?<=^\s*)svelte-ignore(?=\s)|@component\b/;
 const SCRIPT_COMMENT_KEYWORD = /(?<=^\s*)svelte-ignore(?=\s)/;
+
+// A JSDoc type like {import('./$types').PageLoad}, the JS way to write a TS one.
+const JSDOC_IMPORT = /import\(\s*['"]([^'"]+)['"]\s*\)(?:\.([\w$]+))?/g;
 
 // CSS is read with patterns rather than the parser, which can't read SCSS.
 const CSS_SYNTAX = /:global(?![\w-])|(?<=@(?:-[a-z]+-)?keyframes\s+)-global-/g;
@@ -125,9 +135,8 @@ const JS_COMMENT = /\/\*[\s\S]*?\*\/|\/\/.*$/gm;
 // What ends an opening tag, unless it's in a comment.
 const TAG_END = /\/\*[\s\S]*?\*\/|\/\/.*|>/g;
 
-// Fields that hold parser bookkeeping or TypeScript types, never running code.
-const SKIPPED_FIELDS = new Set([
-  'metadata',
+// Fields that hold TypeScript types, never running code.
+const TYPE_FIELDS = new Set([
   'typeAnnotation',
   'typeParameters',
   'typeArguments',
@@ -137,7 +146,7 @@ const SKIPPED_FIELDS = new Set([
 ]);
 
 // TypeScript declarations that are gone when the code runs. Their parameter
-// names aren't uses of anything.
+// names aren't uses of anything, but the types inside them still are.
 const TYPE_ONLY_NODES = new Set([
   'TSInterfaceDeclaration',
   'TSTypeAliasDeclaration',
@@ -202,9 +211,22 @@ function patternNames(pattern: any): string[] {
   return patternIdentifiers(pattern).map((item) => item.name);
 }
 
+// Is this `import('$app/navigation')`? Imports with a variable path can't be known.
+function isOwnImport(node: any): boolean {
+  return node?.type === 'ImportExpression' && importsOwnNames(String(node.source?.value));
+}
+
+// The names in `const { goto } = await import('$app/navigation')` are Svelte's,
+// even though they're declared here like local ones.
+function declaresOwnNames(declarator: Node): boolean {
+  return declarator.init?.type === 'AwaitExpression' && isOwnImport(declarator.init.argument);
+}
+
 function declaredNames(statement: any): string[] {
   if (statement?.type === 'VariableDeclaration') {
-    return statement.declarations.flatMap((item: Node) => patternNames(item.id));
+    return statement.declarations
+      .filter((item: Node) => !declaresOwnNames(item))
+      .flatMap((item: Node) => patternNames(item.id));
   }
   const hasName = statement?.type === 'FunctionDeclaration' || statement?.type === 'ClassDeclaration';
   return hasName ? patternNames(statement.id) : [];
@@ -232,12 +254,19 @@ function localNames(node: Node, parent?: Node): string[] {
   // The `id` is here for `function error() {}` used as a value: inside it, `error`
   // means that function.
   if (FUNCTION_NODES.has(node.type)) {
-    return [...patternNames(node.id), ...node.params.flatMap(patternNames), ...hoistedVarNames(node.body)];
+    return [
+      ...patternNames(node.id),
+      ...node.params.flatMap(patternNames),
+      ...hoistedVarNames(node.body),
+      ...typeParameterNames(node),
+    ];
   }
 
   switch (node.type) {
+    case 'ClassDeclaration':
+      return typeParameterNames(node);
     case 'ClassExpression':
-      return patternNames(node.id);
+      return [...patternNames(node.id), ...typeParameterNames(node)];
     case 'CatchClause':
       return patternNames(node.param);
     case 'BlockStatement':
@@ -266,6 +295,11 @@ function localNames(node: Node, parent?: Node): string[] {
 
 function snippetName(snippet: Node): string[] {
   return patternNames(snippet.expression);
+}
+
+// In `function a<Page>(b: Page)`, `Page` is that function's own, not an import.
+function typeParameterNames(node: Node): string[] {
+  return (node.typeParameters?.params ?? []).map((item: Node) => item.name);
 }
 
 // The names a block creates only exist in some of its parts. In
@@ -298,6 +332,12 @@ function exportsValue(statement: Node): boolean {
 function withoutWrappers(value: any): any {
   while (value?.expression && value.type.startsWith('TS')) value = value.expression;
   return value;
+}
+
+// Finds the object in `{ ... }` or `wrap({ ... })`.
+function objectIn(value: any): any {
+  const inner = withoutWrappers(value);
+  return inner?.type === 'CallExpression' ? inner.arguments.map(objectIn).find(Boolean) : inner;
 }
 
 // Finds what a name was set to at the top of a script, so that `export { load }`
@@ -373,6 +413,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // `goto`, or `children` and `data` from $props().
   const ownNames = new Set<string>();
 
+  // The ones among those that stand for a whole module, like `kit` in
+  // `import * as kit from '@sveltejs/kit'`.
+  const namespaceNames = new Set<string>();
+
   // Where the walk is. `await` is only Svelte syntax directly in the markup.
   let inMarkup = false;
   let functionDepth = 0;
@@ -420,7 +464,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
     markSyntaxBetween(position, endOf(node));
 
-    if (node.type === 'EachBlock' && node.context) markEachNames(node);
+    if (node.type === 'EachBlock') markEachNames(node);
     if (node.type === 'SnippetBlock') markSnippetSignature(node);
 
     // `then value` and `{:catch error}` create names, which plain JS has no way to
@@ -444,9 +488,12 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // `as goal (goal.id)` names each item and says how to track it. Plain JS would
   // read `goal (goal.id)` as a function call, so the whole stretch is marked.
   function markEachNames(node: Node) {
-    const tagEnd = text.indexOf('}', (node.key ?? node.context).end);
+    const tagEnd = text.indexOf('}', (node.key ?? node.context ?? node.expression).end);
     const firstChildStart = node.body.nodes[0]?.start ?? endOf(node);
-    if (tagEnd >= 0 && tagEnd < firstChildStart) add(afterPreviousWord(node.context.start), tagEnd);
+    if (tagEnd < 0 || tagEnd >= firstChildStart) return;
+    if (node.context) add(afterPreviousWord(node.context.start), tagEnd);
+    // `{#each a, i}` names only the index.
+    else if (node.index) add(text.lastIndexOf(',', tagEnd), afterPreviousWord(tagEnd));
   }
 
   // Marks the ( ) of a call. They come after the name and any <Type>.
@@ -518,11 +565,13 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     const isSpecial =
       node.name.startsWith('data-sveltekit-') ||
       (node.name.startsWith('--') && COMPONENT_NODES.has(parent?.type ?? '')) ||
-      (parent?.type === 'Script' && SCRIPT_ATTRIBUTES.has(node.name));
-    if (isSpecial) add(node.start, node.start + node.name.length);
-
+      (parent?.type === 'Script' && SCRIPT_ATTRIBUTES.has(node.name)) ||
+      parent?.type === 'SvelteBoundary'; // pending, failed and onerror are all Svelte's
     // Shorthand: {name} is both the attribute and its value.
-    if (text[node.start] === '{') {
+    const isShorthand = text[node.start] === '{';
+    const nameStart = isShorthand ? node.start + 1 : node.start;
+    if (isSpecial) add(nameStart, nameStart + node.name.length);
+    if (isShorthand) {
       add(node.start, node.start + 1);
       add(endOf(node) - 1, endOf(node));
     }
@@ -591,11 +640,32 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // Marks `redirect` in `import { redirect } from '@sveltejs/kit'`, and notes
   // the name so its uses get marked too. Type-only imports don't run anything.
   function markImportedNames(node: Node) {
-    if (node.importKind === 'type' || !importsOwnNames(node.source.value)) return;
+    if (!importsOwnNames(node.source.value)) return;
     for (const specifier of node.specifiers) {
-      if (specifier.importKind === 'type') continue;
       ownNames.add(specifier.local.name);
-      add(specifier.start, specifier.end);
+      if (specifier.type === 'ImportNamespaceSpecifier') namespaceNames.add(specifier.local.name);
+      // In `{ type Snippet }`, the word `type` is TypeScript and the name isn't.
+      add(specifier.imported?.start ?? specifier.start, specifier.end);
+    }
+  }
+
+  // `export { page } from '$app/state'` passes Svelte's name along.
+  function markReexportedNames(node: Node) {
+    if (!importsOwnNames(String(node.source?.value))) return;
+    for (const specifier of node.specifiers) add(specifier.local.start, specifier.end);
+  }
+
+  // `const { goto } = await import('$app/navigation')` is an import in all but
+  // name. `const kit = await import(...)` works like `import * as kit`.
+  function markDynamicImport(pattern: Node) {
+    if (pattern.type === 'Identifier') {
+      ownNames.add(pattern.name);
+      namespaceNames.add(pattern.name);
+      add(pattern.start, pattern.start + pattern.name.length);
+    }
+    for (const property of pattern.properties ?? []) {
+      if (property.key) add(property.key.start, property.key.end);
+      for (const name of patternNames(property.value)) ownNames.add(name);
     }
   }
 
@@ -603,10 +673,23 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // `load({ params })` is SvelteKit's. Only that one spot is marked: further
   // down, `params` reads like any other variable.
   function markProvidedValues(value: any) {
-    const params = withoutWrappers(value)?.params;
-    if (params?.[0]?.type !== 'ObjectPattern') return;
-    for (const property of params[0].properties) {
+    const inner = withoutWrappers(value);
+    // `wrap(({ params }) => ...)` hands the same values on to the function inside.
+    if (inner?.type === 'CallExpression') {
+      for (const argument of inner.arguments) markProvidedValues(argument);
+      return;
+    }
+    const first = inner?.params?.[0];
+    if (first?.type !== 'ObjectPattern') return;
+    for (const property of first.properties) {
       if (property.key) add(property.key.start, property.key.end);
+    }
+  }
+
+  // Marks the keys in an object that SvelteKit knows by name.
+  function markFixedKeys(value: any, names: string[]) {
+    for (const property of objectIn(value)?.properties ?? []) {
+      if (names.includes(property.key?.name)) add(property.key.start, property.key.end);
     }
   }
 
@@ -617,10 +700,104 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     // `actions` is an object of functions, so check each one. The functions in
     // other objects, like `snapshot`, are passed your own data.
     if (id.name === 'actions') {
-      for (const property of withoutWrappers(value)?.properties ?? []) markProvidedValues(property.value);
+      markFixedKeys(value, ACTION_KEYS);
+      for (const property of objectIn(value)?.properties ?? []) markProvidedValues(property.value);
+    } else if (id.name === 'snapshot') {
+      markFixedKeys(value, SNAPSHOT_KEYS);
+    } else if (id.name === 'transport') {
+      for (const property of objectIn(value)?.properties ?? []) markFixedKeys(property.value, TRANSPORT_KEYS);
     } else {
       markProvidedValues(value);
     }
+  }
+
+  // Calls with Svelte's meaning that aren't runes.
+  function markCall(call: Node) {
+    if (options.runes) markRune(call);
+    // import('svelte/store').then(({ get }) => ...)
+    if (call.callee.property?.name === 'then' && isOwnImport(call.callee.object)) {
+      markProvidedValues(call.arguments[0]);
+    }
+    // resolve(event, { transformPageChunk }) in a `handle` hook
+    if (call.callee.name === 'resolve' && options.exportNames.includes('handle')) {
+      markFixedKeys(call.arguments[1], RESOLVE_KEYS);
+    }
+  }
+
+  // Marks `$app` in the text `$app/forms`, which starts at `start`.
+  function markImportPath(start: number, importPath: string) {
+    const part = markedImportPart(importPath);
+    if (part) add(start + importPath.indexOf(part), start + importPath.indexOf(part) + part.length);
+  }
+
+  // Reads the file, not `comment.value`: Svelte takes the indentation out of that,
+  // so its positions drift on every line.
+  function markJsDocImports(comment: Node) {
+    for (const match of text.slice(comment.start, comment.end).matchAll(JSDOC_IMPORT)) {
+      const matchStart = comment.start + match.index;
+      markImportPath(matchStart + match[0].indexOf(match[1]), match[1]);
+      if (match[2] && importsOwnNames(match[1])) {
+        const nameStart = matchStart + match[0].lastIndexOf(match[2]);
+        add(nameStart, nameStart + match[2].length);
+      }
+    }
+  }
+
+  // `App` needs no import, so it's found by its shape: `App.Locals` in a type.
+  function isKitGlobal(first: Node, name: Node): boolean {
+    return options.inKitProject && first !== name && first.name === 'App';
+  }
+
+  // $$Props and friends. Unlike a store, a plain `$Type` can be your own name.
+  function isDollarType(name: string): boolean {
+    return options.component && name.startsWith('$$');
+  }
+
+  // Marks a name used in a type. In `kit.Handle`, that's both parts.
+  function markTypeName(name: Node, hidden: Set<string>, isValue = false) {
+    let first = name;
+    while (first.type === 'TSQualifiedName') first = first.left;
+    if (first.type !== 'Identifier' || hidden.has(first.name)) return;
+    const isStore = isValue && isStoreName(first.name);
+    if (ownNames.has(first.name) || isStore || isDollarType(first.name) || isKitGlobal(first, name)) {
+      add(first.start, name.end);
+    }
+  }
+
+  // `declare global { namespace App { interface Locals {} } }`
+  function markAppNamespace(node: Node) {
+    add(node.id.start, node.id.end);
+    for (const statement of node.body?.body ?? []) {
+      const declaration = statement.declaration ?? statement;
+      if (APP_TYPES.includes(declaration.id?.name)) add(declaration.id.start, declaration.id.end);
+    }
+  }
+
+  // TypeScript stays unmarked, apart from the names that belong to Svelte, like
+  // `Snippet`, `PageLoad` and `$$Props`.
+  function visitType(value: any, hidden: Set<string>) {
+    if (Array.isArray(value)) {
+      for (const item of value) visitType(item, hidden);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+
+    if (value.type === 'TSTypeReference') markTypeName(value.typeName, hidden);
+    else if (value.type === 'TSExpressionWithTypeArguments') markTypeName(value.expression, hidden);
+    else if (value.type === 'TSTypeQuery') markTypeName(value.exprName, hidden, true);
+    else if (value.type === 'TSImportType') {
+      const importPath = value.argument?.value;
+      if (typeof importPath === 'string') {
+        markImportPath(value.argument.start + 1, importPath);
+        if (value.qualifier && importsOwnNames(importPath)) add(value.qualifier.start, value.qualifier.end);
+      }
+    } else if (value.type === 'TSTypeAliasDeclaration' || value.type === 'TSInterfaceDeclaration') {
+      if (isDollarType(value.id.name)) add(value.id.start, value.id.end); // type $$Props = ...
+    }
+
+    const generics = value.typeParameters?.type === 'TSTypeParameterDeclaration';
+    const inner = generics ? new Set([...hidden, ...typeParameterNames(value)]) : hidden;
+    for (const child of Object.values(value)) visitType(child, inner);
   }
 
   // Svelte passes the content between a component's tags as `children`, and
@@ -683,14 +860,22 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     else if (node.type === 'ExpressionTag') markBraces(node);
     else if (node.type === 'SpreadAttribute') markSpread(node);
     else if (node.type === 'Attribute') markAttribute(node, parent);
-    else if (node.type === 'CallExpression' && options.runes) markRune(node);
-    else if (node.type === 'Comment') {
+    else if (node.type === 'CallExpression') markCall(node);
+    else if (node.type === 'VariableDeclarator' && declaresOwnNames(node)) markDynamicImport(node.id);
+    else if (node.type === 'TSModuleDeclaration' && node.id.name === 'App' && options.inKitProject) {
+      markAppNamespace(node);
+    } else if (node.type === 'Comment') {
       markCommentKeyword(node.start + '<!--'.length, node.data, MARKUP_COMMENT_KEYWORD);
     } else if (node.type === 'AwaitExpression') {
       if (inMarkup && functionDepth === 0) add(node.start, node.start + 'await'.length);
     } else if (node.type === 'Identifier') {
       const isMarkedName = ownNames.has(node.name) || isStoreName(node.name);
       if (isMarkedName && !hidden.has(node.name) && isUse(parent, field)) add(node.start, node.end);
+      // The `error` in `kit.error()`, where `kit` is the whole of @sveltejs/kit.
+      const object = parent?.type === 'MemberExpression' && field === 'property' ? parent.object : null;
+      if (!parent?.computed && namespaceNames.has(object?.name) && !hidden.has(object.name)) {
+        add(node.start, node.end);
+      }
     } else if (
       node.type.startsWith('Svelte') ||
       node.type === 'Component' ||
@@ -704,11 +889,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
     // Import, re-export and dynamic import() nodes all have a `source`.
     const importPath = node.source?.value;
-    const importPart = typeof importPath === 'string' ? markedImportPart(importPath) : undefined;
-    if (importPart) {
-      const start = node.source.start + 1 + importPath.indexOf(importPart); // the 1 skips the quote
-      add(start, start + importPart.length);
-    }
+    if (typeof importPath === 'string') markImportPath(node.source.start + 1, importPath); // 1 skips the quote
   }
 
   // Goes through the whole tree, marking every node it meets. `hidden` holds the
@@ -721,7 +902,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     if (value === null || typeof value !== 'object') return;
 
     if (typeof value.type === 'string') {
-      if (TYPE_ONLY_NODES.has(value.type)) return;
+      if (TYPE_ONLY_NODES.has(value.type)) {
+        visitType(value, hidden);
+        return;
+      }
       const locals = localNames(value, parent);
       if (locals.length > 0) hidden = new Set([...hidden, ...locals]);
       markNode(value, hidden, parent, field);
@@ -732,7 +916,11 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     const isFunction = FUNCTION_NODES.has(value.type);
     if (isFunction) functionDepth++;
     for (const [childField, child] of Object.entries(value)) {
-      if (SKIPPED_FIELDS.has(childField)) continue;
+      if (childField === 'metadata') continue; // parser bookkeeping
+      if (TYPE_FIELDS.has(childField)) {
+        visitType(child, hidden);
+        continue;
+      }
       const partNames = namesInPart(value, childField);
       visit(child, partNames.length > 0 ? new Set([...hidden, ...partNames]) : hidden, value, childField);
     }
@@ -745,7 +933,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     const body = (script?.content.body ?? []) as any[];
     for (const statement of body) {
       if (statement.type === 'ImportDeclaration') markImportedNames(statement);
-      if (statement.type === 'ExportNamedDeclaration') markSpecialExports(statement, body);
+      if (statement.type === 'ExportNamedDeclaration') {
+        markSpecialExports(statement, body);
+        markReexportedNames(statement);
+      }
       if (options.component && script === ast.instance) markInstanceStatement(statement);
     }
   }
@@ -761,11 +952,11 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   }
 
   // Comments in scripts aren't in the tree either. The parser lists them here.
-  // Svelte obeys these in components and in modules with runes, not in plain JS.
-  if (options.runes) {
-    for (const comment of (ast.comments ?? []) as any[]) {
-      markCommentKeyword(comment.start + '//'.length, comment.value, SCRIPT_COMMENT_KEYWORD);
-    }
+  // Svelte obeys svelte-ignore in components and modules with runes, not in plain JS.
+  for (const comment of (ast.comments ?? []) as any[]) {
+    const start = comment.start + '//'.length;
+    if (options.runes) markCommentKeyword(start, text.slice(start, comment.end), SCRIPT_COMMENT_KEYWORD);
+    if (comment.type === 'Block' && comment.value.startsWith('*')) markJsDocImports(comment);
   }
 
   // Style blocks are blanked out before parsing, so a real one isn't inside any
@@ -787,7 +978,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   }));
 }
 
-function findComponentMarks(source: string, filePath: string): MarkResult {
+function findComponentMarks(source: string, filePath: string, inKitProject: boolean): MarkResult {
   const styleMarks = marksInStyles(source);
   const options = {
     offset: 0,
@@ -796,6 +987,7 @@ function findComponentMarks(source: string, filePath: string): MarkResult {
     exportNames: specialExports(filePath),
     propNames: ['children', ...kitProps(filePath)],
     styleMarks,
+    inKitProject,
   };
 
   // The parser can't read SCSS, so it never sees the style blocks. Everything here
@@ -824,6 +1016,7 @@ function findModuleMarks(source: string, filePath: string, inKitProject: boolean
     exportNames: specialExports(filePath, inKitProject),
     propNames: [],
     styleMarks: [],
+    inKitProject,
   });
   return { marks: marks ?? [], complete: marks !== null };
 }
@@ -837,7 +1030,7 @@ function findTemplateMarks(source: string): MarkResult {
 }
 
 export function findMarks(source: string, filePath = 'Component.svelte', inKitProject = true): MarkResult {
-  if (filePath.endsWith('.svelte')) return findComponentMarks(source, filePath);
+  if (filePath.endsWith('.svelte')) return findComponentMarks(source, filePath, inKitProject);
   if (isKitTemplate(filePath)) return findTemplateMarks(source);
   return findModuleMarks(source, filePath, inKitProject);
 }

@@ -28,7 +28,7 @@ export const RUNES = new Set([
 // Import paths that get a mark. This includes older names like $lib and $env/*,
 // because plenty of code still uses them.
 const MARKED_IMPORT =
-  /^(svelte|\$lib|#lib|\$app|\$env|\$service-worker|@sveltejs\/[a-z-]+)(?:\/|$)|\/(\$types)(?:\.js)?$/;
+  /^(svelte|\$lib|#lib|\$app|\$env|\$service-worker|@sveltejs\/[a-z-]+)(?:\/|$)|\/(\$types)(?:\.d\.ts|\.[jt]s)?$/;
 
 // The part of an import path that gets the mark: `$app` in `$app/forms` and
 // `$types` in `./$types`. What follows it is an ordinary path.
@@ -37,8 +37,9 @@ export function markedImportPart(importPath: string): string | undefined {
   return match?.[1] ?? match?.[2];
 }
 
-// Modules that provide Svelte's or SvelteKit's own functions and values.
-const OWN_NAMES_IMPORT = /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)/;
+// Modules that provide Svelte's or SvelteKit's own functions, values and types.
+const OWN_NAMES_IMPORT =
+  /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)|\/\$types(\.d\.ts|\.[jt]s)?$/;
 
 // $app/env/public and $app/env/private hold your own environment variables.
 const YOUR_VARIABLES_IMPORT = /^\$app\/env\/(private|public)$/;
@@ -72,6 +73,16 @@ const HOOK_EXPORTS = ['handle', 'handleFetch', 'handleError', 'init', 'reroute',
 
 // <script> attributes that plain HTML doesn't have.
 export const SCRIPT_ATTRIBUTES = new Set(['module', 'context', 'generics']);
+
+// Object keys whose names SvelteKit fixes. `actions` can have any names, but
+// `default` is the action a plain form post runs.
+export const ACTION_KEYS = ['default'];
+export const SNAPSHOT_KEYS = ['capture', 'restore'];
+export const TRANSPORT_KEYS = ['encode', 'decode'];
+export const RESOLVE_KEYS = ['transformPageChunk', 'filterSerializedResponseHeaders', 'preload'];
+
+// The types SvelteKit lets you fill in, inside `namespace App` in src/app.d.ts.
+export const APP_TYPES = ['Error', 'Locals', 'PageData', 'PageState', 'Platform'];
 
 export function specialExports(filePath: string, inKitProject = true): string[] {
   const name = basename(filePath);
@@ -112,7 +123,7 @@ export function allowsRunes(filePath: string): boolean {
 const LARGEST_SCRIPT_FILE = 500_000;
 
 // A quick check, so ordinary JS files never reach the parser.
-const MENTIONS_SVELTE = /svelte|\$app|\$env|\$lib|\$service-worker|#lib|\$types/;
+const MENTIONS_SVELTE = /svelte|\$app|\$env|\$lib|\$service-worker|#lib|\$types|\bApp\.[A-Z]/;
 
 // SvelteKit's page templates. Any other HTML file is left alone.
 export function isKitTemplate(filePath: string): boolean {
@@ -121,6 +132,7 @@ export function isKitTemplate(filePath: string): boolean {
 
 export function shouldScan(filePath: string, text: string, inKitProject = true): boolean {
   if (filePath.endsWith('.svelte') || isKitTemplate(filePath)) return true;
+  if (inKitProject && /(^|[\\/])src[\\/]app\.d\.ts$/.test(filePath)) return true;
   if (!/\.(js|mjs|ts|mts)$/.test(filePath) || filePath.endsWith('.d.ts')) return false;
   if (text.length > LARGEST_SCRIPT_FILE) return false;
   return allowsRunes(filePath) || specialExports(filePath, inKitProject).length > 0 || MENTIONS_SVELTE.test(text);
