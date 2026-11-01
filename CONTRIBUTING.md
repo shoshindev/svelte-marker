@@ -2,9 +2,9 @@
 
 ## How it works
 
-`src/findMarks.ts` uses Svelte's own parser to read the file, then walks the result to find the Svelte-specific pieces. `src/svelteNames.ts` holds the hand-kept lists of runes, import paths and special exports. `src/extension.ts` draws the marks as editor decorations, which are colored overlays that an extension can place on any text. The mark's default colors are in `package.json`, under `contributes.colors`.
+`src/findMarks.ts` uses Svelte's own parser to read the file, then walks the result to find the Svelte-specific pieces. `src/svelteNames.ts` holds the hand-kept lists of runes, import paths and special exports. `src/kitProject.ts` checks whether a file belongs to a SvelteKit project. `src/extension.ts` draws the marks as editor decorations, which are colored overlays that an extension can place on any text. The mark's default colors are in `package.json`, under `contributes.colors`.
 
-The parser only reads components, so a `.js` or `.ts` file gets wrapped in a `<script>` tag first. If that file contains the text `</script>` itself, the wrapper breaks and the file gets no marks. Ordinary JS files are skipped without being parsed, unless their name or contents mention Svelte or SvelteKit. `:global` is found with a pattern rather than the parser, because the parser can't read SCSS.
+The parser only reads components, so a `.js` or `.ts` file gets wrapped in a `<script>` tag first. Any `</script>` text in that file is swapped for text of the same length, so it can't end the wrapper early. Ordinary JS files are skipped without being parsed, unless their name or contents mention Svelte or SvelteKit. `:global` is found with a pattern rather than the parser, because the parser can't read SCSS.
 
 It can't use the grammar's scopes, for the reasons in `SCOPES.md`.
 

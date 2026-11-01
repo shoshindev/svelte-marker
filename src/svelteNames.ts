@@ -73,23 +73,30 @@ const HOOK_EXPORTS = ['handle', 'handleFetch', 'handleError', 'init', 'reroute',
 // <script> attributes that plain HTML doesn't have.
 export const SCRIPT_ATTRIBUTES = new Set(['module', 'context', 'generics']);
 
-export function specialExports(filePath: string): string[] {
+export function specialExports(filePath: string, inKitProject = true): string[] {
   const name = basename(filePath);
   if (/^\+(page|layout)(@[^.]*)?\.svelte$/.test(name)) return ['snapshot'];
   if (/^\+page\.server\.[jt]s$/.test(name)) return [...PAGE_EXPORTS, 'actions'];
   if (/^\+(page|layout)(\.server)?\.[jt]s$/.test(name)) return PAGE_EXPORTS;
   if (/^\+server\.[jt]s$/.test(name)) return SERVER_EXPORTS;
-  if (/(^|[\\/])src[\\/]hooks(\.server|\.client)?\.[jt]s$/.test(filePath)) return HOOK_EXPORTS;
+
+  // The rest are only known by where they are, and `src/hooks.ts` is an ordinary
+  // name outside SvelteKit. Each of these can also be a folder with an index file.
+  if (!inKitProject) return [];
+  if (/(^|[\\/])src[\\/]hooks(\.server|\.client)?([\\/]index)?\.[jt]s$/.test(filePath)) return HOOK_EXPORTS;
+  if (/(^|[\\/])src[\\/]params([\\/]index)?\.[jt]s$/.test(filePath)) return ['params'];
   if (/(^|[\\/])src[\\/]params[\\/][^\\/]+\.[jt]s$/.test(filePath)) return ['match'];
+  if (/(^|[\\/])src[\\/]env([\\/]index)?\.[jt]s$/.test(filePath)) return ['variables'];
   return [];
 }
 
-// The props SvelteKit passes to page and layout components. As with exports, the
-// file decides: in any other component, `data` is a prop you named yourself.
+// The props SvelteKit passes to page, layout and error components. As with exports,
+// the file decides: in any other component, `data` is a prop you named yourself.
 export function kitProps(filePath: string): string[] {
   const name = basename(filePath);
   if (/^\+page(@[^.]*)?\.svelte$/.test(name)) return ['data', 'form', 'params'];
-  if (/^\+layout(@[^.]*)?\.svelte$/.test(name)) return ['data'];
+  if (/^\+layout(@[^.]*)?\.svelte$/.test(name)) return ['data', 'params'];
+  if (name === '+error.svelte') return ['error'];
   return [];
 }
 
@@ -105,16 +112,16 @@ export function allowsRunes(filePath: string): boolean {
 const LARGEST_SCRIPT_FILE = 500_000;
 
 // A quick check, so ordinary JS files never reach the parser.
-const MENTIONS_SVELTE = /svelte|\$app|\$env|\$lib|#lib|\$types/;
+const MENTIONS_SVELTE = /svelte|\$app|\$env|\$lib|\$service-worker|#lib|\$types/;
 
 // SvelteKit's page templates. Any other HTML file is left alone.
 export function isKitTemplate(filePath: string): boolean {
   return /(^|[\\/])src[\\/](app|error)\.html$/.test(filePath);
 }
 
-export function shouldScan(filePath: string, text: string): boolean {
+export function shouldScan(filePath: string, text: string, inKitProject = true): boolean {
   if (filePath.endsWith('.svelte') || isKitTemplate(filePath)) return true;
   if (!/\.(js|mjs|ts|mts)$/.test(filePath) || filePath.endsWith('.d.ts')) return false;
   if (text.length > LARGEST_SCRIPT_FILE) return false;
-  return allowsRunes(filePath) || specialExports(filePath).length > 0 || MENTIONS_SVELTE.test(text);
+  return allowsRunes(filePath) || specialExports(filePath, inKitProject).length > 0 || MENTIONS_SVELTE.test(text);
 }

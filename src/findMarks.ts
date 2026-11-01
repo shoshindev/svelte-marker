@@ -85,7 +85,7 @@ const MARKUP_COMMENT_KEYWORD = /(?<=^\s*)(?:svelte-ignore(?=\s)|@component\b)/;
 const SCRIPT_COMMENT_KEYWORD = /(?<=^\s*)svelte-ignore(?=\s)/;
 
 // CSS is read with patterns rather than the parser, which can't read SCSS.
-const CSS_SYNTAX = /:global\b|(?<=@(?:-[a-z]+-)?keyframes\s+)-global-/g;
+const CSS_SYNTAX = /:global(?![\w-])|(?<=@(?:-[a-z]+-)?keyframes\s+)-global-/g;
 
 // The parts of CSS to ignore: comments and strings. `url(...)` is here so that
 // the `//` in `url(http://a.b)` doesn't look like a comment.
@@ -95,14 +95,35 @@ const CSS_NON_CODE =
 // The only Svelte syntax in SvelteKit's app.html and error.html.
 const KIT_TEMPLATE_SYNTAX = /%sveltekit\.[\w.]+%|data-sveltekit-[a-z-]+/g;
 
-// The (?=...) stops these matching custom elements like <style-guide>.
-const STYLE_BLOCK = /^[ \t]*<style(?=[\s/>])[\s\S]*?<\/style\s*>/gm;
-const SCRIPT_BLOCK = /^<script(?=[\s/>])[\s\S]*?<\/script\s*>/gm;
+// The (?=...) stops these matching custom elements like <style-guide>. Comments
+// and scripts are matched too, so that a <style> written inside one isn't taken
+// for a real block. Only a real block fills the capture group.
+const STYLE_BLOCK =
+  /<!--[\s\S]*?-->|<script(?=[\s/>])[\s\S]*?<\/script\s*>|(<style(?=[\s/>])[\s\S]*?<\/style\s*>)/g;
+const SCRIPT_BLOCK = /^[ \t]*<script(?=[\s/>])[\s\S]*?<\/script\s*>/gm;
+
+// svelte-preprocess accepts these spellings, but Svelte's parser only reads
+// TypeScript when it sees lang="ts".
+const LONG_TS_ATTRIBUTE =
+  /(?<=<script(?=[\s/>])[^>]*)\b(?:lang=(["']?)typescript\1|type=(["'])(?:text|application)\/typescript\2)/g;
 
 // Svelte's parser only reads components, so a .js or .ts file gets wrapped in
 // this tag first, which makes it look like a component with only a script.
 const SCRIPT_OPENING = '<script lang="ts">';
 const SCRIPT_CLOSING = '\n</script>';
+
+// A #! line only counts at the very start of a file, which the wrapper isn't.
+const HASHBANG = /^#!.*/;
+
+// In a JS file this text can only be in a string or a comment, but it would end
+// the wrapper early.
+const CLOSING_SCRIPT = /<\/script/g;
+
+// JS comments, which Svelte allows inside a tag.
+const JS_COMMENT = /\/\*[\s\S]*?\*\/|\/\/.*$/gm;
+
+// What ends an opening tag, unless it's in a comment.
+const TAG_END = /\/\*[\s\S]*?\*\/|\/\/.*|>/g;
 
 // Fields that hold parser bookkeeping or TypeScript types, never running code.
 const SKIPPED_FIELDS = new Set([
@@ -110,7 +131,18 @@ const SKIPPED_FIELDS = new Set([
   'typeAnnotation',
   'typeParameters',
   'typeArguments',
+  'superTypeParameters',
+  'implements',
   'returnType',
+]);
+
+// TypeScript declarations that are gone when the code runs. Their parameter
+// names aren't uses of anything.
+const TYPE_ONLY_NODES = new Set([
+  'TSInterfaceDeclaration',
+  'TSTypeAliasDeclaration',
+  'TSDeclareFunction',
+  'TSDeclareMethod',
 ]);
 
 // Swaps text for spaces but keeps every line break, so all the character
@@ -145,23 +177,29 @@ function childrenOf(node: Node): Node[] {
 
 // Lists the names a pattern creates: `{ a, b: [c] }` creates a and c. The parser
 // reads the pattern in `let:item={{ a, b }}` as an expression, so those count too.
-function patternNames(pattern: any): string[] {
+function patternIdentifiers(pattern: any): Node[] {
   switch (pattern?.type) {
     case 'Identifier':
-      return [pattern.name];
+      return [pattern];
     case 'ObjectPattern':
     case 'ObjectExpression':
-      return pattern.properties.flatMap((item: Node) => patternNames(item.value ?? item.argument));
+      return pattern.properties.flatMap((item: Node) => patternIdentifiers(item.value ?? item.argument));
     case 'ArrayPattern':
     case 'ArrayExpression':
-      return pattern.elements.flatMap(patternNames);
+      return pattern.elements.flatMap(patternIdentifiers);
     case 'AssignmentPattern':
-      return patternNames(pattern.left);
+      return patternIdentifiers(pattern.left);
     case 'RestElement':
-      return patternNames(pattern.argument);
+      return patternIdentifiers(pattern.argument);
+    case 'TSParameterProperty': // constructor(private a: string)
+      return patternIdentifiers(pattern.parameter);
     default:
       return [];
   }
+}
+
+function patternNames(pattern: any): string[] {
+  return patternIdentifiers(pattern).map((item) => item.name);
 }
 
 function declaredNames(statement: any): string[] {
@@ -170,6 +208,15 @@ function declaredNames(statement: any): string[] {
   }
   const hasName = statement?.type === 'FunctionDeclaration' || statement?.type === 'ClassDeclaration';
   return hasName ? patternNames(statement.id) : [];
+}
+
+// `var` belongs to the whole function, however deep in blocks it's written. This
+// stops at inner functions, whose `var`s are their own.
+function hoistedVarNames(value: any): string[] {
+  if (Array.isArray(value)) return value.flatMap(hoistedVarNames);
+  if (typeof value?.type !== 'string' || FUNCTION_NODES.has(value.type)) return [];
+  const own = value.type === 'VariableDeclaration' && value.kind === 'var' ? declaredNames(value) : [];
+  return [...own, ...Object.values(value).flatMap(hoistedVarNames)];
 }
 
 // Lists the names a `let:` directive creates: `let:item` creates item, and
@@ -185,7 +232,7 @@ function localNames(node: Node, parent?: Node): string[] {
   // The `id` is here for `function error() {}` used as a value: inside it, `error`
   // means that function.
   if (FUNCTION_NODES.has(node.type)) {
-    return [...patternNames(node.id), ...node.params.flatMap(patternNames)];
+    return [...patternNames(node.id), ...node.params.flatMap(patternNames), ...hoistedVarNames(node.body)];
   }
 
   switch (node.type) {
@@ -195,6 +242,7 @@ function localNames(node: Node, parent?: Node): string[] {
       return patternNames(node.param);
     case 'BlockStatement':
     case 'StaticBlock':
+    case 'TSModuleBlock':
       return node.body.flatMap(declaredNames);
     case 'SwitchStatement':
       return node.cases.flatMap((item: Node) => item.consequent.flatMap(declaredNames));
@@ -206,17 +254,29 @@ function localNames(node: Node, parent?: Node): string[] {
     case 'Fragment':
       return [
         ...node.nodes.flatMap((item: Node) => declaredNames(item.declaration)),
+        ...node.nodes.filter((item: Node) => item.type === 'SnippetBlock').flatMap(snippetName),
         ...(parent?.attributes ?? []).flatMap(letNames),
       ];
-    case 'EachBlock':
-      return [...patternNames(node.context), node.index].filter(Boolean);
     case 'SnippetBlock':
       return node.parameters.flatMap(patternNames);
-    case 'AwaitBlock':
-      return [...patternNames(node.value), ...patternNames(node.error)];
     default:
       return [];
   }
+}
+
+function snippetName(snippet: Node): string[] {
+  return patternNames(snippet.expression);
+}
+
+// The names a block creates only exist in some of its parts. In
+// `{#each page.items as page}`, the first `page` is still the imported one.
+function namesInPart(node: Node, field: string): string[] {
+  if (node.type === 'EachBlock' && (field === 'body' || field === 'key')) {
+    return [...patternNames(node.context), node.index].filter(Boolean);
+  }
+  if (node.type === 'AwaitBlock' && field === 'then') return patternNames(node.value);
+  if (node.type === 'AwaitBlock' && field === 'catch') return patternNames(node.error);
+  return [];
 }
 
 // Is this name being used as a value? In `o.error`, `{ error: 1 }` and
@@ -279,6 +339,7 @@ function closingBracket(css: string, opening: number): number {
 function marksInStyles(source: string): Mark[] {
   const marks: Mark[] = [];
   for (const block of source.matchAll(STYLE_BLOCK)) {
+    if (!block[1]) continue;
     const css = block[0].replace(CSS_NON_CODE, blankOut);
     for (const match of css.matchAll(CSS_SYNTAX)) {
       const start = block.index + match.index;
@@ -327,9 +388,19 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   // Marks only the syntax between two positions. Used for the gaps in a block.
   function markSyntaxBetween(start: number, end: number) {
-    for (const match of text.slice(start, end).matchAll(TAG_SYNTAX)) {
+    const gap = text.slice(start, end).replace(JS_COMMENT, blankOut);
+    for (const match of gap.matchAll(TAG_SYNTAX)) {
       add(start + match.index, start + match.index + match[0].length);
     }
+  }
+
+  // Finds the > that ends an opening tag, starting after its last attribute.
+  function closingAngle(position: number): number {
+    TAG_END.lastIndex = position;
+    for (let match = TAG_END.exec(text); match; match = TAG_END.exec(text)) {
+      if (match[0] === '>') return match.index;
+    }
+    return -1;
   }
 
   // The parser has no node for {:else} or {/if}. So we step through a block's
@@ -342,6 +413,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     for (const child of childrenOf(node.declaration ?? node)) {
       markSyntaxBetween(position, child.start);
       position = Math.max(position, endOf(child));
+      // Generics like <T extends { a: 1 }> are TypeScript, so a } in there isn't the tag's.
+      if (child === node.expression && node.typeParams) {
+        position = text.indexOf(node.typeParams, position) + node.typeParams.length;
+      }
     }
     markSyntaxBetween(position, endOf(node));
 
@@ -393,10 +468,19 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
     let position = text.lastIndexOf('(', node.parameters[0]?.start ?? closing);
     for (const parameter of node.parameters) {
-      add(position, parameter.typeAnnotation?.start ?? parameter.end);
+      // In `a: T = 1`, the type belongs to the left part and the mark resumes after it.
+      const type = (parameter.left ?? parameter).typeAnnotation;
+      add(position, type ? beforeType(type.start) : parameter.end);
+      if (type && parameter.left) add(type.end, parameter.end);
       position = parameter.end;
     }
     add(position, closing + 1);
+  }
+
+  // Steps back over the ? in `a?: string`, which is TypeScript too.
+  function beforeType(position: number): number {
+    while (/[\s?]/.test(text[position - 1] ?? '')) position--;
+    return position;
   }
 
   // Marks the two braces in {expression}. The JS between them stays unmarked.
@@ -468,7 +552,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     // The tag ends at the first > after its last attribute. Starting from there
     // skips any > in a value, like `this={a > b}`.
     const parts = [...node.attributes, node.tag ?? node.expression].filter(Boolean);
-    const tagEnd = text.indexOf('>', Math.max(openingNameEnd, ...parts.map((part) => endOf(part))));
+    const tagEnd = closingAngle(Math.max(openingNameEnd, ...parts.map((part) => endOf(part))));
     if (tagEnd >= 0 && tagEnd < end) add(text[tagEnd - 1] === '/' ? tagEnd - 1 : tagEnd, tagEnd + 1);
 
     const closingTag = text.lastIndexOf('</', end - 1);
@@ -528,7 +612,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   function markSpecialExport(id: Node | null, value: any) {
     if (!id || !options.exportNames.includes(id.name)) return;
-    add(id.start, id.end);
+    add(id.start, id.start + id.name.length); // id.end would include `: PageLoad`
 
     // `actions` is an object of functions, so check each one. The functions in
     // other objects, like `snapshot`, are passed your own data.
@@ -579,7 +663,11 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     if (declaration?.type === 'FunctionDeclaration') {
       markSpecialExport(declaration.id, declaration);
     } else if (declaration?.type === 'VariableDeclaration') {
-      for (const item of declaration.declarations) markSpecialExport(item.id, item.init);
+      for (const item of declaration.declarations) {
+        if (item.id.type === 'Identifier') markSpecialExport(item.id, item.init);
+        // `export const { handle } = auth()` has no function to look inside.
+        else for (const id of patternIdentifiers(item.id)) markSpecialExport(id, null);
+      }
     } else if (node.exportKind !== 'type') {
       // A list, like `export { handler as GET }`. The value is declared elsewhere.
       for (const specifier of node.specifiers) {
@@ -633,6 +721,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     if (value === null || typeof value !== 'object') return;
 
     if (typeof value.type === 'string') {
+      if (TYPE_ONLY_NODES.has(value.type)) return;
       const locals = localNames(value, parent);
       if (locals.length > 0) hidden = new Set([...hidden, ...locals]);
       markNode(value, hidden, parent, field);
@@ -643,7 +732,9 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     const isFunction = FUNCTION_NODES.has(value.type);
     if (isFunction) functionDepth++;
     for (const [childField, child] of Object.entries(value)) {
-      if (!SKIPPED_FIELDS.has(childField)) visit(child, hidden, value, childField);
+      if (SKIPPED_FIELDS.has(childField)) continue;
+      const partNames = namesInPart(value, childField);
+      visit(child, partNames.length > 0 ? new Set([...hidden, ...partNames]) : hidden, value, childField);
     }
     if (isFunction) functionDepth--;
   }
@@ -670,14 +761,15 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   }
 
   // Comments in scripts aren't in the tree either. The parser lists them here.
-  if (options.component) {
+  // Svelte obeys these in components and in modules with runes, not in plain JS.
+  if (options.runes) {
     for (const comment of (ast.comments ?? []) as any[]) {
       markCommentKeyword(comment.start + '//'.length, comment.value, SCRIPT_COMMENT_KEYWORD);
     }
   }
 
   // Style blocks are blanked out before parsing, so a real one isn't inside any
-  // node. One in a comment, an element or a JS string is, and has no meaning.
+  // node. One nested in an element is, and Svelte leaves that CSS as it is.
   const topLevelNodes = [ast.module, ast.instance, ...ast.fragment.nodes] as any[];
   for (const { start, end } of options.styleMarks) {
     const isInside = (node: Node) => node.start <= start && end <= endOf(node);
@@ -706,8 +798,11 @@ function findComponentMarks(source: string, filePath: string): MarkResult {
     styleMarks,
   };
 
-  // The parser can't read SCSS, so it never sees the style blocks.
-  const text = source.replace(STYLE_BLOCK, blankOut);
+  // The parser can't read SCSS, so it never sees the style blocks. Everything here
+  // swaps text for text of the same length, so the offsets stay the same.
+  const text = source
+    .replace(STYLE_BLOCK, (match, style) => (style ? blankOut(match) : match))
+    .replace(LONG_TS_ATTRIBUTE, (match) => 'lang="ts"'.padEnd(match.length));
 
   // The normal case: the whole file parses.
   const wholeFile = marksIn(text, options);
@@ -720,12 +815,13 @@ function findComponentMarks(source: string, filePath: string): MarkResult {
   return { marks: [...(markup ?? styleMarks), ...(scripts ?? [])], complete: false };
 }
 
-function findModuleMarks(source: string, filePath: string): MarkResult {
-  const marks = marksIn(SCRIPT_OPENING + source + SCRIPT_CLOSING, {
+function findModuleMarks(source: string, filePath: string, inKitProject: boolean): MarkResult {
+  const body = source.replace(HASHBANG, blankOut).replace(CLOSING_SCRIPT, '<_script');
+  const marks = marksIn(SCRIPT_OPENING + body + SCRIPT_CLOSING, {
     offset: SCRIPT_OPENING.length,
     component: false,
     runes: allowsRunes(filePath),
-    exportNames: specialExports(filePath),
+    exportNames: specialExports(filePath, inKitProject),
     propNames: [],
     styleMarks: [],
   });
@@ -740,8 +836,8 @@ function findTemplateMarks(source: string): MarkResult {
   return { marks, complete: true };
 }
 
-export function findMarks(source: string, filePath = 'Component.svelte'): MarkResult {
+export function findMarks(source: string, filePath = 'Component.svelte', inKitProject = true): MarkResult {
   if (filePath.endsWith('.svelte')) return findComponentMarks(source, filePath);
   if (isKitTemplate(filePath)) return findTemplateMarks(source);
-  return findModuleMarks(source, filePath);
+  return findModuleMarks(source, filePath, inKitProject);
 }

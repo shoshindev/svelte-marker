@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import { findMarks, type Mark } from './findMarks.ts';
+import { isKitProject } from './kitProject.ts';
 import { shouldScan } from './svelteNames.ts';
 
 // The kinds of file that can hold Svelte or SvelteKit code.
@@ -42,18 +43,22 @@ export function activate(context: vscode.ExtensionContext) {
     if (!LANGUAGES.includes(document.languageId)) return;
 
     const text = document.getText();
-    if (!enabled || !shouldScan(document.fileName, text)) {
+    // Only a file on disk has a package.json to look at.
+    const inKitProject = document.uri.scheme !== 'file' || isKitProject(document.fileName);
+    if (!enabled || !shouldScan(document.fileName, text, inKitProject)) {
       editor.setDecorations(marker, []);
       return;
     }
 
     const key = document.uri.toString();
-    const { marks, complete } = findMarks(text, document.fileName);
+    const { marks, complete } = findMarks(text, document.fileName, inKitProject);
     if (complete) lastGoodMarks.set(key, marks);
 
     // Mid-typing the code is often half-written. Leave the marks alone: VS Code
     // moves them along with your edits, and we catch up once the code is valid.
-    if (!complete && afterEdit) return;
+    // A file that has never parsed whole, like one with <script lang="coffee">,
+    // has nothing to catch up to, so it repaints with what did parse.
+    if (!complete && afterEdit && lastGoodMarks.has(key)) return;
 
     const marksToPaint = complete ? marks : (lastGoodMarks.get(key) ?? marks);
     const ranges = marksToPaint.map(

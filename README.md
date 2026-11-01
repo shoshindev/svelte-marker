@@ -37,9 +37,9 @@ Marks appear on their own when you open a Svelte file. Turn them on and off with
 | CSS | `:global` and the `()` in `:global(.a)`, `-global-` |
 | Imports | `svelte`, `$app`, `$env`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/kit` and other `@sveltejs/` packages, `$types`, but not the rest of the path, like `/forms` in `$app/forms` |
 | Imported names | `onMount`, `fade`, `redirect`, `error`, `fail`, `goto`, `page`, wherever they're used |
-| Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, `snapshot`, only in the file types where they mean something |
+| Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, `snapshot`, plus `params` in `src/params.ts` and `variables` in `src/env.ts`, only in the file types where they mean something |
 | Provided values | `params`, `url`, `cookies`, `request`, where they're listed, as in `load({ params })` |
-| Fixed props | `children` from `$props()`, plus `data`, `form` and `params` in `+page.svelte` and `data` in `+layout.svelte`, wherever they're used |
+| Fixed props | `children` from `$props()`, plus `data`, `form` and `params` in `+page.svelte`, `data` and `params` in `+layout.svelte`, and `error` in `+error.svelte`, wherever they're used |
 | SvelteKit templates | `%sveltekit.head%`, `data-sveltekit-preload-data`, in markup and in `src/app.html` and `src/error.html` |
 
 The JS inside stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a mark, and in `$state(0)`, the `0` stays clear. What a tag creates is different, because plain JS would read it another way: `goal (goal.id)` would be a function call. Attributes inside a Svelte tag get marks only if they're Svelte's own. Plain attributes like `onclick` stay unmarked too, though the braces in `onclick={go}` don't.
@@ -47,6 +47,8 @@ The JS inside stays unmarked: in `{#if count > 0}`, only `{#if` and `}` get a ma
 Some names stay unmarked on purpose. Names from `$lib`, `#lib`, `$env/*` and `$app/env/public` are your own code and variables, so only the placeholder in the import path gets a mark. A local variable that shares a name with an import, like `error` in `catch (error)`, stays unmarked too. So does your own name for a fixed prop, like `content` in `{ children: content }`.
 
 Runes are marked in `.svelte` files and in modules with `.svelte` in their name, like `.svelte.ts` and `.svelte.test.ts`, because `$state()` is an ordinary function call anywhere else.
+
+SvelteKit's `hooks`, `params` and `env` files are found by their path, so they only count in a project whose nearest `package.json` lists `@sveltejs/kit`. In any other package, `src/hooks.ts` is an ordinary file.
 
 ## Color
 
@@ -64,8 +66,7 @@ Against VS Code's ten built-in themes, text under the default marks meets the WC
 
 ## Known limits
 
-- Marks stay where they are while you type and catch up once the code is valid, because half-typed code can't be parsed. A file that opens with an error shows marks for whichever part parsed, its markup or its scripts, and no marks if both are broken.
-- A `.js` or `.ts` file that contains the text `</script>` gets no marks.
+- Marks stay where they are while you type and catch up once the code is valid, because half-typed code can't be parsed. A file that opens with an error shows marks for whichever part parsed, its markup or its scripts, keeps them up to date as you type, and has no marks if both are broken.
 - Route names like `[slug]` and `+page` can't be marked, because they're file and folder names, not text in a file.
 - A value SvelteKit passes in, like `params`, is only marked where it's listed, because after that it reads like any other variable.
 - Fixed props are only found when they're listed in `$props()`, so `props.children` and legacy `export let data` stay unmarked.

@@ -2,10 +2,13 @@
 //   npm test
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { compile } from 'svelte/compiler';
 import { findMarks, type Mark } from '../src/findMarks.ts';
+import { isKitProject } from '../src/kitProject.ts';
 import { RUNES, shouldScan } from '../src/svelteNames.ts';
 
 function readProjectFile(path: string): string {
@@ -383,6 +386,7 @@ test('marks the props SvelteKit passes, but only in pages and layouts', () => {
   assert.deepEqual(markedText(source, 'src/routes/(app)/+page@.svelte'), inPage);
   assert.deepEqual(markedText(source, 'src/routes/+layout.svelte'), [
     'data',
+    'params',
     '$props',
     '(',
     ')',
@@ -392,8 +396,20 @@ test('marks the props SvelteKit passes, but only in pages and layouts', () => {
     '{',
     '}',
     '{',
+    'params',
     '}',
   ]);
+  const error = '<script>let { error } = $props();</script>{error.status}';
+  assert.deepEqual(markedText(error, 'src/routes/+error.svelte'), [
+    'error',
+    '$props',
+    '(',
+    ')',
+    '{',
+    'error',
+    '}',
+  ]);
+  assert.deepEqual(markedText(error, 'src/lib/Card.svelte'), ['$props', '(', ')', '{', '}']);
   assert.deepEqual(markedText(source, 'src/lib/Card.svelte'), [
     '$props',
     '(',
@@ -934,6 +950,208 @@ test('broken markup keeps the script marks', () => {
   const source = '<script>let x = $state(0);</script>\n<p bind:>Hi</p>';
   assert.equal(findMarks(source).complete, false);
   assert.deepEqual(markedText(source), ['$state', '(', ')']);
+});
+
+test('a special export is marked without its type', () => {
+  const page = 'export const load: PageLoad<Params> = ({ params }) => params;\nexport const ssr: boolean = false;';
+  assert.deepEqual(markedText(page, 'src/routes/+page.ts'), ['load', 'params', 'ssr']);
+  const snapshot = '<script lang="ts">export const snapshot: Snapshot<string> = {};</script>';
+  assert.deepEqual(markedText(snapshot, 'src/routes/+page.svelte'), ['export', 'snapshot']);
+});
+
+test('finds special exports that are destructured', () => {
+  assert.deepEqual(markedText('export const { handle, signIn } = auth();', 'src/hooks.server.ts'), ['handle']);
+  assert.deepEqual(markedText('export const { GET, POST = a, b: PUT } = c;', 'src/routes/+server.ts'), [
+    'GET',
+    'POST',
+    'PUT',
+  ]);
+});
+
+test('marks the Kit 3 exports in src/params and src/env', () => {
+  const params = 'export const params = 1;\nexport const match = 2;';
+  assert.deepEqual(markedText(params, 'src/params.ts'), ['params']);
+  assert.deepEqual(markedText(params, 'src/params/index.js'), ['params']);
+  assert.deepEqual(markedText(params, 'src/params/hex.ts'), ['match']);
+  assert.deepEqual(markedText(params, 'src/lib/params.ts'), []);
+  assert.deepEqual(markedText('export const variables = 1;', 'src/env.ts'), ['variables']);
+  assert.deepEqual(markedText('export const variables = 1;', 'src/env/index.ts'), ['variables']);
+  assert.deepEqual(markedText('export const variables = 1;', 'src/lib/env.ts'), []);
+});
+
+test('hooks can be a folder with an index file', () => {
+  const source = 'export const handle = ({ event }) => event;';
+  for (const path of ['src/hooks/index.ts', 'src/hooks.server/index.ts', 'src/hooks.client/index.js']) {
+    assert.deepEqual(markedText(source, path), ['handle', 'event'], path);
+    assert.equal(shouldScan(path, source), true, path);
+  }
+  assert.deepEqual(markedText(source, 'src/hooks/other.ts'), []);
+});
+
+test('paths only count as SvelteKit files in a SvelteKit project', () => {
+  const hooks = 'export function handle(a) {}\nexport const init = ({ b }) => b;';
+  assert.deepEqual(findMarks(hooks, 'src/hooks.ts', false).marks, []);
+  assert.equal(shouldScan('src/hooks.ts', hooks, false), false);
+  assert.deepEqual(findMarks('export function match() {}', 'src/params/a.ts', false).marks, []);
+  assert.deepEqual(findMarks('export const load = 1;', 'src/routes/+page.ts', false).marks, [{ start: 13, end: 17 }]);
+});
+
+test('finds a SvelteKit project from the nearest package.json', () => {
+  const root = mkdtempSync(join(tmpdir(), 'svelte-marker-'));
+  try {
+    mkdirSync(join(root, 'apps/web/src'), { recursive: true });
+    mkdirSync(join(root, 'packages/ui/src'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), '{ "name": "monorepo", "devDependencies": { "@sveltejs/kit": "3" } }');
+    writeFileSync(join(root, 'apps/web/package.json'), '{ "devDependencies": { "@sveltejs/kit": "3" } }');
+    writeFileSync(join(root, 'packages/ui/package.json'), '{ "name": "ui" }');
+    assert.equal(isKitProject(join(root, 'apps/web/src/hooks.ts')), true);
+    assert.equal(isKitProject(join(root, 'packages/ui/src/hooks.ts')), false);
+    assert.equal(isKitProject(join(tmpdir(), 'no-such-folder/src/hooks.ts')), true);
+  } finally {
+    rmSync(root, { recursive: true });
+  }
+});
+
+test('marks a JS file that mentions </script>, and one with a #! line', () => {
+  const closing = "export function GET({ url }) { return '</script>'; }";
+  assert.deepEqual(findMarks(closing, 'src/routes/+server.ts').complete, true);
+  assert.deepEqual(markedText(closing, 'src/routes/+server.ts'), ['GET', 'url']);
+  const comment = '// use </script> here\nconst a = $state(0);';
+  assert.deepEqual(markedText(comment, 'a.svelte.ts'), ['$state', '(', ')']);
+  const hashbang = '#!/usr/bin/env node\nexport function load() {}';
+  assert.equal(findMarks(hashbang, 'src/routes/+page.js').complete, true);
+  assert.deepEqual(markedText(hashbang, 'src/routes/+page.js'), ['load']);
+  assert.equal(findMarks(hashbang, 'src/routes/+page.js').marks[0].start, hashbang.indexOf('load'));
+});
+
+test('snippet parameters are marked without their TypeScript', () => {
+  const ts = '<script lang="ts"></script>\n';
+  assert.deepEqual(markedText(`${ts}{#snippet a(b?: string, c?: number)}{/snippet}`), [
+    '{#snippet',
+    ' a',
+    '(b',
+    ', c',
+    ')',
+    '}',
+    '{/snippet}',
+  ]);
+  assert.deepEqual(markedText(`${ts}{#snippet a(b: number = 1, { c }: D = {})}{/snippet}`), [
+    '{#snippet',
+    ' a',
+    '(b',
+    ' = 1',
+    ', { c }',
+    ' = {}',
+    ')',
+    '}',
+    '{/snippet}',
+  ]);
+  assert.deepEqual(markedText('{#snippet a(b = 1)}{/snippet}'), ['{#snippet', ' a', '(b = 1', ')', '}', '{/snippet}']);
+});
+
+test('generics in a snippet stay unmarked', () => {
+  const ts = '<script lang="ts"></script>\n';
+  const expected = ['{#snippet', ' a', '(b', ')', '}', '{/snippet}'];
+  assert.deepEqual(markedText(`${ts}{#snippet a<T extends { c: 1 }>(b: T)}{/snippet}`), expected);
+  assert.deepEqual(markedText(`${ts}{#snippet a<as>(b: as)}{/snippet}`), expected);
+  assert.deepEqual(markedText(`${ts}{#snippet a<T = { then: 1 }>(b: T)}{/snippet}`), expected);
+});
+
+test('comments inside a tag are left alone', () => {
+  assert.deepEqual(markedText('{#if /* then */ a}b{/if}'), ['{#if', '}', '{/if}']);
+  assert.deepEqual(markedText('{#if a // as\n}b{/if}'), ['{#if', '}', '{/if}']);
+  assert.deepEqual(markedText('{#each a /* as */ as b}c{/each}'), ['{#each', 'as', ' b', '}', '{/each}']);
+  const greater = '<Foo a="1"\n// b > c\n>x</Foo>';
+  assert.deepEqual(markedText(greater), ['<Foo', '>', '</Foo>']);
+  assert.equal(findMarks(greater).marks[1].start, greater.lastIndexOf('>x'));
+  assert.deepEqual(markedText('<Foo a="1" /* b > c */ />'), ['<Foo', '/>']);
+});
+
+test('a block only hides a name in the parts that can see it', () => {
+  const imports = "<script>import { page } from '$app/state';</script>\n";
+  const pageCount = (markup: string) => markedText(imports + markup).filter((text) => text === 'page').length;
+  assert.equal(pageCount('{#each page.a as page}{page.b}{/each}'), 2);
+  assert.equal(pageCount('{#each a as page (page.id)}{page.b}{/each}'), 1);
+  assert.equal(pageCount('{#each a as page}{page.b}{:else}{page.c}{/each}'), 2);
+  assert.equal(pageCount('{#await page.a}{page.b}{:then page}{page.c}{/await}'), 3);
+  assert.equal(pageCount('{#await a then b}{:catch page}{page.c}{/await}'), 1);
+  assert.equal(pageCount('{#await a then page}{page.b}{:catch e}{page.c}{/await}'), 2);
+});
+
+test('a snippet hides an imported name where it can be seen', () => {
+  const imports = "<script>import { page } from '$app/state';</script>\n";
+  const pageCount = (markup: string) => markedText(imports + markup).filter((text) => text === 'page').length;
+  assert.equal(pageCount('{#snippet page()}x{/snippet}{@render page()}'), 1);
+  assert.equal(pageCount('<div>{#snippet page()}x{/snippet}</div>{page.a}'), 2);
+});
+
+test('var hides an imported name in the whole function', () => {
+  const imports = "import { error } from '@sveltejs/kit';\n";
+  const code = 'function a(b) { if (b) { var error = 1; } return error; }';
+  assert.deepEqual(markedText(imports + code, 'a.js'), ['error', '@sveltejs/kit']);
+  const inner = 'function a() { function b() { var error = 1; } return error; }';
+  assert.deepEqual(markedText(imports + inner, 'a.js'), ['error', '@sveltejs/kit', 'error']);
+});
+
+test('TypeScript-only code never counts as using a name', () => {
+  const imports = "import { error } from '@sveltejs/kit';\n";
+  const typesOnly = [
+    'interface A { m(error: string): void; (error: number): void; new (error: number): A; }',
+    'declare function a(error: string): void;',
+    'function a(error: string): void;\nfunction a(b: any) {}',
+    'abstract class A { abstract m(error: string): void; }',
+    'class A { m(error: string): void; m(b: any) {} }',
+    'class A extends B<error> {}',
+    'class A implements error {}',
+    'class A { constructor(private error: string) { error; } }',
+    'namespace N { const error = 1; error; }',
+  ];
+  for (const code of typesOnly) {
+    assert.deepEqual(markedText(imports + code, 'a.ts'), ['error', '@sveltejs/kit'], code);
+  }
+});
+
+test('reads the longer ways of asking for TypeScript', () => {
+  for (const attribute of ['lang="typescript"', "lang='typescript'", 'type="text/typescript"']) {
+    const source = `<script ${attribute}>let a: number = $state(1);</script>\n<p>{a}</p>`;
+    assert.equal(findMarks(source).complete, true, attribute);
+    assert.deepEqual(markedText(source), ['$state', '(', ')', '{', '}'], attribute);
+  }
+});
+
+test('finds a style block that shares a line with other code', () => {
+  assert.deepEqual(markedText('<p>a</p><style>:global(.b) {}</style>'), [':global', '(', ')']);
+  assert.deepEqual(markedText('<script>let a;</script><style>:global(.b) {}</style>'), [':global', '(', ')']);
+  const scss = '<p class:a>b</p><style lang="scss">$c: 1; :global(.d) {}</style>';
+  assert.equal(findMarks(scss).complete, true);
+  assert.deepEqual(markedText(scss), ['class:a', ':global', '(', ')']);
+});
+
+test('a style in a script or comment is not a style block', () => {
+  const string = "<script>const a = '<style>';</script>\n<p class:b>c</p>\n<style>:global(.d) {}</style>";
+  assert.equal(findMarks(string).complete, true);
+  assert.deepEqual(markedText(string), ['class:b', ':global', '(', ')']);
+  assert.deepEqual(markedText('<p>a</p><!-- <style>:global(.b) {}</style> -->'), []);
+  assert.deepEqual(markedText('<div><style>:global(.b) {}</style></div>'), []);
+});
+
+test('a broken script keeps the markup marks when it is indented', () => {
+  const source = '  <script>let a = $state(</script>\n<p class:b>c</p>';
+  assert.equal(findMarks(source).complete, false);
+  assert.deepEqual(markedText(source), ['class:b']);
+});
+
+test('svelte-ignore counts in modules with runes', () => {
+  const source = '// svelte-ignore state_referenced_locally\nlet a = $state(1);';
+  assert.deepEqual(markedText(source, 'a.svelte.ts'), ['svelte-ignore', '$state', '(', ')']);
+});
+
+test('scans a file that only mentions $service-worker', () => {
+  assert.equal(shouldScan('src/service-worker.js', "import { build } from '$service-worker';"), true);
+});
+
+test('only marks :global itself, not a longer word', () => {
+  assert.deepEqual(markedText('<style>:global-x {}\n.a:globalb {}\n:global .c {}</style>'), [':global']);
 });
 
 // Stands in for half-typed code: every cut must give valid marks and never crash.
