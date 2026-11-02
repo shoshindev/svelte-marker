@@ -1,0 +1,3 @@
+# Marks follow Svelte values within one file, without type information
+
+The extension finds Svelte names in the parser's output for one file. It follows a Svelte value from where it enters, through member access, destructuring and `const` copies, and into the parameters of functions Svelte calls, like `load` or a `beforeNavigate` callback. It stops at functions only your code calls and at other files, so `event.locals` inside a helper like `auth(event)` stays clear. Guessing by name would also mark names that aren't Svelte's, like `config.params`. Asking TypeScript for types would mean bundling TypeScript and building each project's types on every pause in typing.

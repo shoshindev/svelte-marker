@@ -12,3 +12,6 @@ SCOPES.md
 CONTRIBUTING.md
 images/icon.svg
 **/*.map
+GLOSSARY.md
+docs/**
+.npmrc

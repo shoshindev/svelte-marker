@@ -1,8 +1,8 @@
 {
   "name": "svelte-marker",
   "displayName": "Svelte Marker",
-  "description": "Highlighter-style marks behind everything in a SvelteKit project that is not plain JavaScript, HTML or CSS.",
-  "version": "0.0.4",
+  "description": "Highlighter-style marks behind Svelte and SvelteKit syntax and names, so you can tell them apart from plain JavaScript, HTML and CSS.",
+  "version": "0.0.5",
   "publisher": "shoshindev",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -30,7 +30,7 @@
     "commands": [
       {
         "command": "svelteMarker.toggle",
-        "title": "Svelte Marker: Toggle Highlighting"
+        "title": "Svelte Marker: Toggle Marks"
       }
     ],
     "colors": [
@@ -49,16 +49,25 @@
   "scripts": {
     "build": "node esbuild.mjs",
     "check": "tsc --noEmit",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/findMarks.test.ts",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/findMarks.test.ts test/svelteNames.test.ts",
     "vsix": "vsce package --no-dependencies",
     "vscode:prepublish": "node notices.mjs && node esbuild.mjs --production"
   },
   "devDependencies": {
+    "@sveltejs/adapter-auto": "8.0.0",
+    "@sveltejs/adapter-cloudflare": "8.0.2",
+    "@sveltejs/adapter-netlify": "7.0.1",
+    "@sveltejs/adapter-node": "6.0.1",
+    "@sveltejs/adapter-static": "4.0.1",
+    "@sveltejs/adapter-vercel": "7.0.2",
+    "@sveltejs/kit": "3.1.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@types/node": "24.19.2",
     "@types/vscode": "1.100.0",
     "@vscode/vsce": "4.1.0",
     "esbuild": "0.28.2",
     "svelte": "5.57.3",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "typescript-6": "npm:typescript@6.0.3"
   }
 }

@@ -8,20 +8,18 @@
 // We walk that tree and note where the Svelte-specific nodes are.
 
 import { parse } from 'svelte/compiler';
+import { fn, MODULE_SHAPES, OWN_DIRECTIVES, type Shape, type ShapeRef, SHAPES } from './shapes.ts';
 import {
-  ACTION_KEYS,
   allowsRunes,
   APP_TYPES,
   importsOwnNames,
   isKitTemplate,
+  isSvelteConfig,
   kitProps,
   markedImportPart,
-  RESOLVE_KEYS,
   RUNES,
   SCRIPT_ATTRIBUTES,
-  SNAPSHOT_KEYS,
   specialExports,
-  TRANSPORT_KEYS,
 } from './svelteNames.ts';
 
 // One highlighter stroke, as character offsets into the file.
@@ -50,11 +48,24 @@ interface ParseOptions {
   offset: number; // how far the real file starts into the parsed text
   component: boolean; // whether this is a .svelte file
   runes: boolean; // whether runes work in this file
-  exportNames: string[]; // exports that mean something special in this file
-  propNames: string[]; // props whose names Svelte or SvelteKit fixes in this file
+  exports: Record<string, ShapeRef | null>; // exports that mean something special in this file
+  props: Shape; // what $props() holds in this file
+  configFile: boolean; // whether this is svelte.config.js
   styleMarks: Mark[]; // what the patterns found in <style> blocks
   inKitProject: boolean; // whether SvelteKit's global `App` types exist here
 }
+
+// A name that holds something of Svelte's. `marked` says whether its uses get a
+// mark: `params` from `load({ params })` keeps Svelte's spelling, but `link`
+// from `load({ url: link })` is yours.
+interface Binding {
+  shape: Shape | null;
+  marked: boolean;
+}
+
+// The names in reach at one point in the code. Null stands for a name of yours,
+// which hides any Svelte name spelled the same.
+type Scope = Map<string, Binding | null>;
 
 // Node types that have their own {...} syntax.
 const TAG_NODES = new Set([
@@ -216,17 +227,9 @@ function isOwnImport(node: any): boolean {
   return node?.type === 'ImportExpression' && importsOwnNames(String(node.source?.value));
 }
 
-// The names in `const { goto } = await import('$app/navigation')` are Svelte's,
-// even though they're declared here like local ones.
-function declaresOwnNames(declarator: Node): boolean {
-  return declarator.init?.type === 'AwaitExpression' && isOwnImport(declarator.init.argument);
-}
-
 function declaredNames(statement: any): string[] {
   if (statement?.type === 'VariableDeclaration') {
-    return statement.declarations
-      .filter((item: Node) => !declaresOwnNames(item))
-      .flatMap((item: Node) => patternNames(item.id));
+    return statement.declarations.flatMap((item: Node) => patternNames(item.id));
   }
   const hasName = statement?.type === 'FunctionDeclaration' || statement?.type === 'ClassDeclaration';
   return hasName ? patternNames(statement.id) : [];
@@ -340,6 +343,50 @@ function objectIn(value: any): any {
   return inner?.type === 'CallExpression' ? inner.arguments.map(objectIn).find(Boolean) : inner;
 }
 
+function resolveShape(ref: ShapeRef | null | undefined): Shape | null {
+  return typeof ref === 'string' ? (SHAPES[ref] ?? null) : (ref ?? null);
+}
+
+// Is this one of the names Svelte fixes on a value of this shape?
+function hasMember(shape: Shape | null, name: string | undefined): boolean {
+  if (!shape || name === undefined) return false;
+  return Boolean(shape.anyMember) || Object.hasOwn(shape.members ?? {}, name) || Boolean(shape.older?.includes(name));
+}
+
+function memberShape(shape: Shape | null, name: string): Shape | null {
+  return hasMember(shape, name) ? resolveShape(shape!.members?.[name]) : null;
+}
+
+// A whole module, as `import * as kit` or `await import()` gives it.
+function moduleShape(importPath: string): Shape {
+  return { anyMember: true, members: MODULE_SHAPES[importPath] };
+}
+
+// The name a key spells, in `{ a: 1 }` and `{ 'a': 1 }`.
+function keyName(key: any): string | undefined {
+  if (key?.type === 'Identifier') return key.name;
+  return key?.type === 'Literal' && typeof key.value === 'string' ? key.value : undefined;
+}
+
+// Adds names of yours to a scope.
+function withLocals(scope: Scope, names: string[]): Scope {
+  return names.length === 0 ? scope : new Map([...scope, ...names.map((name): [string, null] => [name, null])]);
+}
+
+// What a function returns. This stops at inner functions, whose returns are their own.
+function returnedValues(node: Node): Node[] {
+  if (node.body?.type !== 'BlockStatement') return [node.body];
+  const found: Node[] = [];
+  const walk = (value: any) => {
+    if (Array.isArray(value)) value.forEach(walk);
+    if (typeof value?.type !== 'string' || FUNCTION_NODES.has(value.type)) return;
+    if (value.type === 'ReturnStatement' && value.argument) found.push(value.argument);
+    for (const [field, child] of Object.entries(value)) if (field !== 'metadata') walk(child);
+  };
+  walk(node.body.body);
+  return found;
+}
+
 // Finds what a name was set to at the top of a script, so that `export { load }`
 // can be followed back to `const load = ...`.
 function topLevelValue(body: Node[], name: string): Node | null {
@@ -409,13 +456,33 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   const marks: Mark[] = [];
 
-  // Names that belong to Svelte or SvelteKit, like an imported `redirect` or
-  // `goto`, or `children` and `data` from $props().
-  const ownNames = new Set<string>();
+  // Names seen everywhere in the file that hold something of Svelte's, like an
+  // imported `goto`, or `children` and `data` from $props().
+  const globals = new Map<string, Binding>();
 
-  // The ones among those that stand for a whole module, like `kit` in
-  // `import * as kit from '@sveltejs/kit'`.
-  const namespaceNames = new Set<string>();
+  // The statements at the top of the scripts, where `export { load }` and
+  // `use:enhance={submit}` can find what those names were set to.
+  const topLevel = [ast.module, ast.instance].flatMap((script: any) => script?.content.body ?? []);
+
+  // What Svelte will pass to the functions it calls, like `load`, noted before
+  // the walk reaches them.
+  const paramShapes = new WeakMap<Node, (ShapeRef | null)[]>();
+
+  // A function at the top of a script can be walked before we learn that Svelte
+  // calls it, as with `use:enhance={submit}`. Then it's walked once more. Only
+  // those can be, because a function inside another can see that one's names.
+  const topLevelFunctions = new Set(
+    topLevel
+      .map((statement: Node) => statement.declaration ?? statement)
+      .flatMap((statement: Node) => (statement.type === 'VariableDeclaration' ? statement.declarations : [statement]))
+      .map((item: Node) => (item.type === 'VariableDeclarator' ? withoutWrappers(item.init) : item))
+      .filter((item: any) => FUNCTION_NODES.has(item?.type)),
+  );
+  const walkedFunctions = new WeakSet<Node>();
+  const walkedAgain = new WeakSet<Node>();
+
+  // Stops `const a = b; const b = a;` from going round forever.
+  const following = new Set<Node>();
 
   // Where the walk is. `await` is only Svelte syntax directly in the markup.
   let inMarkup = false;
@@ -546,7 +613,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   }
 
   // "bind:value={name}" gets a mark on "bind:value" and on the two braces.
-  function markDirective(node: Node) {
+  function markDirective(node: Node, scope: Scope) {
     const name = text.slice(node.start, endOf(node)).match(/^[a-z]+:[^\s=>/]+/);
     if (!name) return;
     const nameEnd = node.start + name[0].length;
@@ -559,9 +626,35 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       const closing = text.lastIndexOf('}', endOf(node) - 1);
       add(closing, closing + 1);
     }
+
+    const own = OWN_DIRECTIVES[node.type];
+    if (!own) return;
+    const [first, ...rest] = node.name.split('.');
+    const binding = lookup(first, scope);
+    if (binding) {
+      // `fade` in `transition:fade={{ duration }}` takes the element, then those
+      // options. An animation like `flip` takes where the element moved first.
+      const target = rest.reduce((shape: Shape | null, name: string) => memberShape(shape, name), binding.shape);
+      expect(node.expression, target?.args?.[node.type === 'AnimateDirective' ? 2 : 1], scope);
+    } else if (binding === undefined && rest.length === 0) {
+      // Your own action or transition returns an object that Svelte reads.
+      const declared = withoutWrappers(topLevelValue(topLevel, first));
+      if (FUNCTION_NODES.has(declared?.type)) expect(declared, own, scope);
+    }
+  }
+
+  // `?/save` in a form's action names one of the page's actions. Plain HTML
+  // reads it as the start of a query string.
+  function markActionQuery(node: Node) {
+    if (!options.inKitProject || (node.name !== 'action' && node.name !== 'formaction')) return;
+    for (const part of [node.value].flat()) {
+      const at = part?.type === 'Text' ? part.raw.indexOf('?/') : -1;
+      if (at >= 0) add(part.start + at, part.start + at + '?/'.length);
+    }
   }
 
   function markAttribute(node: Node, parent?: Node) {
+    markActionQuery(node);
     const isSpecial =
       node.name.startsWith('data-sveltekit-') ||
       (node.name.startsWith('--') && COMPONENT_NODES.has(parent?.type ?? '')) ||
@@ -637,91 +730,210 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     markCallBrackets(call);
   }
 
-  // Marks `redirect` in `import { redirect } from '@sveltejs/kit'`, and notes
-  // the name so its uses get marked too. Type-only imports don't run anything.
+  function lookup(name: string, scope: Scope): Binding | null | undefined {
+    return scope.has(name) ? scope.get(name) : globals.get(name);
+  }
+
+  // What a piece of code holds, if it's something of Svelte's: `event.cookies`
+  // holds Cookies when `event` holds what SvelteKit passes to `load`.
+  function shapeOf(value: any, scope: Scope): Shape | null {
+    const inner = withoutWrappers(value);
+    switch (inner?.type) {
+      case 'Identifier': {
+        const binding = lookup(inner.name, scope);
+        // `$page` holds what the store `page` holds.
+        if (binding === undefined && isStoreName(inner.name)) {
+          return resolveShape(lookup(inner.name.slice(1), scope)?.shape?.value);
+        }
+        return binding?.shape ?? null;
+      }
+      case 'MemberExpression':
+        return inner.computed ? null : memberShape(shapeOf(inner.object, scope), inner.property.name);
+      case 'ChainExpression':
+        return shapeOf(inner.expression, scope);
+      case 'AwaitExpression':
+        return isOwnImport(inner.argument) ? moduleShape(inner.argument.source.value) : shapeOf(inner.argument, scope);
+      case 'CallExpression':
+      case 'NewExpression':
+        if (options.component && inner.callee.type === 'Identifier' && inner.callee.name === '$props') {
+          return options.props;
+        }
+        return resolveShape(shapeOf(inner.callee, scope)?.returns);
+      default:
+        return null;
+    }
+  }
+
+  // Notes the names a pattern takes from something of Svelte's. In
+  // `{ params, url: link }` taken from a load event, both keys get a mark. So
+  // does every use of `params`, which keeps Svelte's spelling, but not of `link`.
+  function bindPattern(pattern: any, shape: Shape | null): [string, Binding][] {
+    if (!shape) return [];
+    switch (pattern?.type) {
+      case 'Identifier':
+        return [[pattern.name, { shape, marked: false }]];
+      case 'AssignmentPattern':
+        return bindPattern(pattern.left, shape);
+      case 'ArrayPattern':
+        return pattern.elements.flatMap((item: Node) => bindPattern(item, resolveShape(shape.items)));
+      case 'ObjectPattern':
+        return pattern.properties.flatMap((property: Node): [string, Binding][] => {
+          const name = property.computed ? undefined : keyName(property.key);
+          if (!hasMember(shape, name)) return [];
+          add(property.key.start, property.key.end);
+          const inner = memberShape(shape, name!);
+          const value = property.value.type === 'AssignmentPattern' ? property.value.left : property.value;
+          if (value.type !== 'Identifier') return bindPattern(value, inner);
+          const marked = value.name === name;
+          return marked || inner ? [[value.name, { shape: inner, marked }]] : [];
+        });
+      default:
+        return [];
+    }
+  }
+
+  // The names a node creates that hold something of Svelte's: the parameters of a
+  // function Svelte calls, and `const { params } = event` in a block or {@const}.
+  function boundNames(node: Node, scope: Scope): Scope {
+    const bound: Scope = new Map();
+    const params = paramShapes.get(node);
+    if (params) {
+      node.params.forEach((param: Node, index: number) => {
+        for (const [name, binding] of bindPattern(param, resolveShape(params[index]))) bound.set(name, binding);
+      });
+    }
+    const statements =
+      node.type === 'BlockStatement' || node.type === 'StaticBlock'
+        ? node.body
+        : node.type === 'Fragment'
+          ? node.nodes.map((item: Node) => item.declaration)
+          : [];
+    const declarations = statements.filter((item: any) => item?.type === 'VariableDeclaration');
+    if (declarations.length === 0) return bound;
+    const inner = new Map([...scope, ...bound]);
+    for (const declarator of declarations.flatMap((item: Node) => item.declarations)) {
+      for (const [name, binding] of bindPattern(declarator.id, shapeOf(declarator.init, inner))) {
+        bound.set(name, binding);
+        inner.set(name, binding);
+      }
+    }
+    return bound;
+  }
+
+  // Marks the keys Svelte knows in a value you write for Svelte to read, like the
+  // options in `goto(url, { replaceState: true })`, and notes what Svelte will
+  // pass to any function in it.
+  function expect(value: any, ref: ShapeRef | null | undefined, scope: Scope = new Map()) {
+    const shape = resolveShape(ref);
+    const inner = withoutWrappers(value);
+    if (!shape || !inner) return;
+    switch (inner.type) {
+      case 'ObjectExpression':
+        for (const property of inner.properties) {
+          const name = property.computed ? undefined : keyName(property.key);
+          if (hasMember(shape, name)) {
+            add(property.key.start, property.key.end);
+            expect(property.value, shape.members?.[name!], scope);
+          } else if (name !== undefined) {
+            expect(property.value, shape.anyKey, scope);
+          }
+        }
+        break;
+      case 'ArrayExpression':
+        for (const item of inner.elements) expect(item, shape.items, scope);
+        break;
+      case 'ConditionalExpression':
+        expect(inner.consequent, shape, scope);
+        expect(inner.alternate, shape, scope);
+        break;
+      case 'LogicalExpression':
+        expect(inner.left, shape, scope);
+        expect(inner.right, shape, scope);
+        break;
+      case 'CallExpression':
+        // `wrap(({ params }) => ...)` hands the same values on to the function inside.
+        if (!shapeOf(inner.callee, scope)) for (const argument of inner.arguments) expect(argument, shape, scope);
+        break;
+      case 'Identifier': {
+        // A name set at the top of the script, as in `export { load }`.
+        const declared = lookup(inner.name, scope) === undefined ? topLevelValue(topLevel, inner.name) : null;
+        if (declared && !following.has(declared)) {
+          following.add(declared);
+          expect(declared, shape, scope);
+          following.delete(declared);
+        }
+        break;
+      }
+      default:
+        if (FUNCTION_NODES.has(inner.type)) expectFunction(inner, shape);
+    }
+  }
+
+  function expectFunction(node: Node, shape: Shape) {
+    if (shape.returns) for (const result of returnedValues(node)) expect(result, shape.returns);
+    if (!shape.args) return;
+    paramShapes.set(node, shape.args);
+    if (walkedFunctions.has(node) && topLevelFunctions.has(node) && !walkedAgain.has(node)) {
+      walkedAgain.add(node);
+      visit(node, new Map());
+    }
+  }
+
+  // Marks `redirect` in `import { redirect } from '@sveltejs/kit'`, and notes the
+  // name, so its uses get marked too. In `{ redirect as go }` and `* as kit`, the
+  // name after `as` is yours. Type-only imports don't run anything.
   function markImportedNames(node: Node) {
-    if (!importsOwnNames(node.source.value)) return;
+    const importPath = node.source.value;
+    if (!importsOwnNames(importPath)) return;
     for (const specifier of node.specifiers) {
-      ownNames.add(specifier.local.name);
-      if (specifier.type === 'ImportNamespaceSpecifier') namespaceNames.add(specifier.local.name);
+      const local = specifier.local.name;
+      if (specifier.type === 'ImportNamespaceSpecifier') {
+        globals.set(local, { shape: moduleShape(importPath), marked: false });
+        continue;
+      }
+      const imported = specifier.type === 'ImportDefaultSpecifier' ? 'default' : keyName(specifier.imported)!;
+      const exports = MODULE_SHAPES[importPath] ?? {};
+      const shape = Object.hasOwn(exports, imported) ? resolveShape(exports[imported]) : null;
+      globals.set(local, { shape, marked: local === imported });
       // In `{ type Snippet }`, the word `type` is TypeScript and the name isn't.
-      add(specifier.imported?.start ?? specifier.start, specifier.end);
+      if (specifier.type === 'ImportSpecifier') add(specifier.imported.start, specifier.imported.end);
     }
   }
 
   // `export { page } from '$app/state'` passes Svelte's name along.
   function markReexportedNames(node: Node) {
     if (!importsOwnNames(String(node.source?.value))) return;
-    for (const specifier of node.specifiers) add(specifier.local.start, specifier.end);
-  }
-
-  // `const { goto } = await import('$app/navigation')` is an import in all but
-  // name. `const kit = await import(...)` works like `import * as kit`.
-  function markDynamicImport(pattern: Node) {
-    if (pattern.type === 'Identifier') {
-      ownNames.add(pattern.name);
-      namespaceNames.add(pattern.name);
-      add(pattern.start, pattern.start + pattern.name.length);
-    }
-    for (const property of pattern.properties ?? []) {
-      if (property.key) add(property.key.start, property.key.end);
-      for (const name of patternNames(property.value)) ownNames.add(name);
+    for (const specifier of node.specifiers) {
+      if (keyName(specifier.local) !== 'default') add(specifier.local.start, specifier.local.end);
     }
   }
 
-  // SvelteKit calls these functions and passes them values, so `params` in
-  // `load({ params })` is SvelteKit's. Only that one spot is marked: further
-  // down, `params` reads like any other variable.
-  function markProvidedValues(value: any) {
-    const inner = withoutWrappers(value);
-    // `wrap(({ params }) => ...)` hands the same values on to the function inside.
-    if (inner?.type === 'CallExpression') {
-      for (const argument of inner.arguments) markProvidedValues(argument);
-      return;
-    }
-    const first = inner?.params?.[0];
-    if (first?.type !== 'ObjectPattern') return;
-    for (const property of first.properties) {
-      if (property.key) add(property.key.start, property.key.end);
-    }
-  }
-
-  // Marks the keys in an object that SvelteKit knows by name.
-  function markFixedKeys(value: any, names: string[]) {
-    for (const property of objectIn(value)?.properties ?? []) {
-      if (names.includes(property.key?.name)) add(property.key.start, property.key.end);
+  // `let { data } = $props()` and `const nav = navigating` at the top of a script
+  // can be seen everywhere in the file, the markup included.
+  function bindTopLevel(statement: Node) {
+    const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+    if (declaration?.type !== 'VariableDeclaration') return;
+    for (const declarator of declaration.declarations) {
+      for (const [name, binding] of bindPattern(declarator.id, shapeOf(declarator.init, new Map()))) {
+        globals.set(name, binding);
+      }
     }
   }
 
   function markSpecialExport(id: Node | null, value: any) {
-    if (!id || !options.exportNames.includes(id.name)) return;
+    if (!id || !Object.hasOwn(options.exports, id.name)) return;
     add(id.start, id.start + id.name.length); // id.end would include `: PageLoad`
-
-    // `actions` is an object of functions, so check each one. The functions in
-    // other objects, like `snapshot`, are passed your own data.
-    if (id.name === 'actions') {
-      markFixedKeys(value, ACTION_KEYS);
-      for (const property of objectIn(value)?.properties ?? []) markProvidedValues(property.value);
-    } else if (id.name === 'snapshot') {
-      markFixedKeys(value, SNAPSHOT_KEYS);
-    } else if (id.name === 'transport') {
-      for (const property of objectIn(value)?.properties ?? []) markFixedKeys(property.value, TRANSPORT_KEYS);
-    } else {
-      markProvidedValues(value);
-    }
+    expect(value, options.exports[id.name]);
   }
 
-  // Calls with Svelte's meaning that aren't runes.
-  function markCall(call: Node) {
-    if (options.runes) markRune(call);
+  // Calls with Svelte's meaning that aren't runes, like `goto(url, { replaceState })`.
+  function markCall(call: Node, scope: Scope) {
+    if (options.runes && call.type === 'CallExpression') markRune(call);
     // import('svelte/store').then(({ get }) => ...)
     if (call.callee.property?.name === 'then' && isOwnImport(call.callee.object)) {
-      markProvidedValues(call.arguments[0]);
+      expect(call.arguments[0], fn([moduleShape(call.callee.object.source.value)]), scope);
     }
-    // resolve(event, { transformPageChunk }) in a `handle` hook
-    if (call.callee.name === 'resolve' && options.exportNames.includes('handle')) {
-      markFixedKeys(call.arguments[1], RESOLVE_KEYS);
-    }
+    shapeOf(call.callee, scope)?.args?.forEach((ref, index) => expect(call.arguments[index], ref, scope));
   }
 
   // Marks `$app` in the text `$app/forms`, which starts at `start`.
@@ -753,14 +965,22 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     return options.component && name.startsWith('$$');
   }
 
-  // Marks a name used in a type. In `kit.Handle`, that's both parts.
-  function markTypeName(name: Node, hidden: Set<string>, isValue = false) {
+  // Marks a name used in a type, like `Snippet`, or `Handle` in `kit.Handle`.
+  function markTypeName(name: Node, scope: Scope, isValue = false) {
     let first = name;
     while (first.type === 'TSQualifiedName') first = first.left;
-    if (first.type !== 'Identifier' || hidden.has(first.name)) return;
-    const isStore = isValue && isStoreName(first.name);
-    if (ownNames.has(first.name) || isStore || isDollarType(first.name) || isKitGlobal(first, name)) {
+    if (first.type !== 'Identifier') return;
+    const binding = lookup(first.name, scope);
+    if (binding === null) return; // one of your names hides it
+    const isStore = isValue && binding === undefined && isStoreName(first.name);
+    const isGlobal = binding === undefined && (isDollarType(first.name) || isKitGlobal(first, name));
+    if (binding?.marked || isStore || isGlobal) {
       add(first.start, name.end);
+    } else if (binding?.shape?.anyMember && name !== first) {
+      // `kit` is your name for the whole module, so the mark starts after it.
+      let qualified = name;
+      while (qualified.left !== first) qualified = qualified.left;
+      add(qualified.right.start, name.end);
     }
   }
 
@@ -775,16 +995,16 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   // TypeScript stays unmarked, apart from the names that belong to Svelte, like
   // `Snippet`, `PageLoad` and `$$Props`.
-  function visitType(value: any, hidden: Set<string>) {
+  function visitType(value: any, scope: Scope) {
     if (Array.isArray(value)) {
-      for (const item of value) visitType(item, hidden);
+      for (const item of value) visitType(item, scope);
       return;
     }
     if (value === null || typeof value !== 'object') return;
 
-    if (value.type === 'TSTypeReference') markTypeName(value.typeName, hidden);
-    else if (value.type === 'TSExpressionWithTypeArguments') markTypeName(value.expression, hidden);
-    else if (value.type === 'TSTypeQuery') markTypeName(value.exprName, hidden, true);
+    if (value.type === 'TSTypeReference') markTypeName(value.typeName, scope);
+    else if (value.type === 'TSExpressionWithTypeArguments') markTypeName(value.expression, scope);
+    else if (value.type === 'TSTypeQuery') markTypeName(value.exprName, scope, true);
     else if (value.type === 'TSImportType') {
       const importPath = value.argument?.value;
       if (typeof importPath === 'string') {
@@ -796,21 +1016,17 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
 
     const generics = value.typeParameters?.type === 'TSTypeParameterDeclaration';
-    const inner = generics ? new Set([...hidden, ...typeParameterNames(value)]) : hidden;
+    const inner = generics ? withLocals(scope, typeParameterNames(value)) : scope;
     for (const child of Object.values(value)) visitType(child, inner);
   }
 
-  // Svelte passes the content between a component's tags as `children`, and
-  // SvelteKit passes a page its `data`. You can't choose those names. In
-  // `{ children: content }`, `content` is your own, so only `children` gets a mark
-  // and the uses of `content` stay unmarked.
-  function markFixedProps(declaration: Node) {
-    if (withoutWrappers(declaration.init)?.callee?.name !== '$props') return;
-    for (const property of declaration.id.properties ?? []) {
-      const name = property.key?.name;
-      if (!options.propNames.includes(name)) continue;
-      add(property.key.start, property.key.end);
-      if (patternNames(property.value).includes(name)) ownNames.add(name);
+  // `export let data` in a legacy page. As with $props(), SvelteKit fixes the name.
+  function markLegacyProps(declaration: any) {
+    if (declaration?.type !== 'VariableDeclaration') return;
+    for (const { id } of declaration.declarations) {
+      if (id.type !== 'Identifier' || id.name === 'children' || !hasMember(options.props, id.name)) continue;
+      add(id.start, id.start + id.name.length);
+      globals.set(id.name, { shape: memberShape(options.props, id.name), marked: true });
     }
   }
 
@@ -820,8 +1036,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       add(statement.label.start, text.indexOf(':', statement.label.end) + 1);
     } else if (statement.type === 'ExportNamedDeclaration' && exportsValue(statement)) {
       add(statement.start, statement.start + 'export'.length);
-    } else if (statement.type === 'VariableDeclaration') {
-      for (const item of statement.declarations) markFixedProps(item);
+      markLegacyProps(statement.declaration);
     }
   }
 
@@ -854,14 +1069,13 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
   }
 
-  function markNode(node: Node, hidden: Set<string>, parent?: Node, field?: string) {
+  function markNode(node: Node, scope: Scope, parent?: Node, field?: string) {
     if (TAG_NODES.has(node.type)) markTagSyntax(node);
-    else if (node.type.endsWith('Directive')) markDirective(node);
+    else if (node.type.endsWith('Directive')) markDirective(node, scope);
     else if (node.type === 'ExpressionTag') markBraces(node);
     else if (node.type === 'SpreadAttribute') markSpread(node);
     else if (node.type === 'Attribute') markAttribute(node, parent);
-    else if (node.type === 'CallExpression') markCall(node);
-    else if (node.type === 'VariableDeclarator' && declaresOwnNames(node)) markDynamicImport(node.id);
+    else if (node.type === 'CallExpression' || node.type === 'NewExpression') markCall(node, scope);
     else if (node.type === 'TSModuleDeclaration' && node.id.name === 'App' && options.inKitProject) {
       markAppNamespace(node);
     } else if (node.type === 'Comment') {
@@ -869,13 +1083,12 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     } else if (node.type === 'AwaitExpression') {
       if (inMarkup && functionDepth === 0) add(node.start, node.start + 'await'.length);
     } else if (node.type === 'Identifier') {
-      const isMarkedName = ownNames.has(node.name) || isStoreName(node.name);
-      if (isMarkedName && !hidden.has(node.name) && isUse(parent, field)) add(node.start, node.end);
-      // The `error` in `kit.error()`, where `kit` is the whole of @sveltejs/kit.
-      const object = parent?.type === 'MemberExpression' && field === 'property' ? parent.object : null;
-      if (!parent?.computed && namespaceNames.has(object?.name) && !hidden.has(object.name)) {
-        add(node.start, node.end);
-      }
+      const binding = lookup(node.name, scope);
+      const isStore = binding === undefined && isStoreName(node.name);
+      if ((binding?.marked || isStore) && isUse(parent, field)) add(node.start, node.end);
+      // `locals` in `event.locals`, and `error` in `kit.error()`.
+      const isMember = parent?.type === 'MemberExpression' && field === 'property' && !parent.computed;
+      if (isMember && hasMember(shapeOf(parent.object, scope), node.name)) add(node.start, node.end);
     } else if (
       node.type.startsWith('Svelte') ||
       node.type === 'Component' ||
@@ -892,50 +1105,60 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     if (typeof importPath === 'string') markImportPath(node.source.start + 1, importPath); // 1 skips the quote
   }
 
-  // Goes through the whole tree, marking every node it meets. `hidden` holds the
-  // local names that are hiding an imported name at this point in the code.
-  function visit(value: any, hidden: Set<string>, parent?: Node, field?: string) {
+  // Goes through the whole tree, marking every node it meets. `scope` holds the
+  // names in reach at this point in the code.
+  function visit(value: any, scope: Scope, parent?: Node, field?: string) {
     if (Array.isArray(value)) {
-      for (const item of value) visit(item, hidden, parent, field);
+      for (const item of value) visit(item, scope, parent, field);
       return;
     }
     if (value === null || typeof value !== 'object') return;
 
     if (typeof value.type === 'string') {
       if (TYPE_ONLY_NODES.has(value.type)) {
-        visitType(value, hidden);
+        visitType(value, scope);
         return;
       }
-      const locals = localNames(value, parent);
-      if (locals.length > 0) hidden = new Set([...hidden, ...locals]);
-      markNode(value, hidden, parent, field);
+      scope = withLocals(scope, localNames(value, parent));
+      const bound = boundNames(value, scope);
+      if (bound.size > 0) scope = new Map([...scope, ...bound]);
+      markNode(value, scope, parent, field);
       if (value.type === 'ImportDeclaration') return; // markImportedNames handled these
       if (value.type === 'LetDirective') return; // what's inside only creates names
     }
 
     const isFunction = FUNCTION_NODES.has(value.type);
-    if (isFunction) functionDepth++;
+    if (isFunction) {
+      functionDepth++;
+      walkedFunctions.add(value);
+    }
     for (const [childField, child] of Object.entries(value)) {
       if (childField === 'metadata') continue; // parser bookkeeping
       if (TYPE_FIELDS.has(childField)) {
-        visitType(child, hidden);
+        visitType(child, scope);
         continue;
       }
-      const partNames = namesInPart(value, childField);
-      visit(child, partNames.length > 0 ? new Set([...hidden, ...partNames]) : hidden, value, childField);
+      visit(child, withLocals(scope, namesInPart(value, childField)), value, childField);
     }
     if (isFunction) functionDepth--;
   }
 
-  // Imports and exports can only sit at the top of a script, so read them first:
-  // the walk below needs to know the imported names before it meets their uses.
+  // Imports can only sit at the top of a script and count in the whole file, so
+  // they're read first. The walk below needs to know the names at the top before
+  // it meets their uses.
+  for (const statement of topLevel) {
+    if (statement.type === 'ImportDeclaration') markImportedNames(statement);
+  }
   for (const script of [ast.module, ast.instance]) {
     const body = (script?.content.body ?? []) as any[];
     for (const statement of body) {
-      if (statement.type === 'ImportDeclaration') markImportedNames(statement);
+      bindTopLevel(statement);
       if (statement.type === 'ExportNamedDeclaration') {
         markSpecialExports(statement, body);
         markReexportedNames(statement);
+      }
+      if (statement.type === 'ExportDefaultDeclaration' && options.configFile) {
+        expect(statement.declaration, 'LegacySvelteConfig');
       }
       if (options.component && script === ast.instance) markInstanceStatement(statement);
     }
@@ -948,7 +1171,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     for (const attribute of ast.options.attributes as any[]) {
       add(attribute.start, attribute.start + attribute.name.length);
     }
-    visit(ast.options.attributes, new Set());
+    visit(ast.options.attributes, new Map());
   }
 
   // Comments in scripts aren't in the tree either. The parser lists them here.
@@ -967,10 +1190,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     if (!topLevelNodes.some((node) => node && node.type !== 'Text' && isInside(node))) add(start, end);
   }
 
-  visit(ast.module, new Set());
-  visit(ast.instance, new Set());
+  visit(ast.module, new Map());
+  visit(ast.instance, new Map());
   inMarkup = true;
-  visit(ast.fragment, new Set());
+  visit(ast.fragment, new Map());
 
   return withoutOverlaps(marks).map((mark) => ({
     start: mark.start - options.offset,
@@ -984,8 +1207,9 @@ function findComponentMarks(source: string, filePath: string, inKitProject: bool
     offset: 0,
     component: true,
     runes: true,
-    exportNames: specialExports(filePath),
-    propNames: ['children', ...kitProps(filePath)],
+    exports: specialExports(filePath),
+    props: { members: { children: null, ...kitProps(filePath) } },
+    configFile: false,
     styleMarks,
     inKitProject,
   };
@@ -1013,8 +1237,9 @@ function findModuleMarks(source: string, filePath: string, inKitProject: boolean
     offset: SCRIPT_OPENING.length,
     component: false,
     runes: allowsRunes(filePath),
-    exportNames: specialExports(filePath, inKitProject),
-    propNames: [],
+    exports: specialExports(filePath, inKitProject),
+    props: {},
+    configFile: isSvelteConfig(filePath),
     styleMarks: [],
     inKitProject,
   });
