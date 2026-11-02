@@ -1654,3 +1654,84 @@ test('marks the methods of a store, and Svelte values in {@const}', () => {
     '{/if}',
   ]);
 });
+
+test('marks what remote functions imported from a .remote file hold', () => {
+  const source = `<script>
+  import { getPosts, createPost } from './data.remote';
+  const posts = getPosts();
+</script>
+<p>{posts.current} {posts.loading}</p>
+<form {...createPost}><input {...createPost.fields.title.as('text')} />{createPost.pending}</form>`;
+  const marked = markedText(source, 'src/routes/+page.svelte');
+  assert.deepEqual(marked, ['{', 'current', '}', '{', 'loading', '}', '{...', '}', '{...', 'fields', 'as', '}', '{', 'pending', '}']);
+  // `title` is a field you named. Outside SvelteKit, `.remote` means nothing.
+  const outside = findMarks(source, 'src/routes/+page.svelte', false).marks;
+  assert.equal(outside.some((mark) => source.slice(mark.start, mark.end) === 'current'), false);
+});
+
+test('marks the names on values Svelte returns', () => {
+  const window = "<script>\n  import { innerWidth } from 'svelte/reactivity/window';\n</script>\n{innerWidth.current}";
+  assert.deepEqual(markedText(window), ['innerWidth', 'svelte', '{', 'innerWidth', 'current', '}']);
+  const forms = "import { deserialize } from '$app/forms';\nconst result = deserialize(text);\nresult.type;";
+  assert.deepEqual(markedText(forms, 'a.js'), ['deserialize', '$app', 'deserialize', 'type']);
+  const transition = "import { fade } from 'svelte/transition';\nconst config = fade(node, {});\nconfig.duration;";
+  assert.deepEqual(markedText(transition, 'a.js'), ['fade', 'svelte', 'fade', 'duration']);
+  const component = "import App from './App.svelte';\nconst app = new App({ target: document.body });\napp.$set({});";
+  assert.deepEqual(markedText(component, 'src/main.js'), ['target', '$set']);
+});
+
+test("marks the names in Svelte's tools: the compiler, preprocessors and adapters", () => {
+  const compiler = `import { parse, compile } from 'svelte/compiler';
+const ast = parse(source, { modern: true });
+for (const node of ast.fragment.nodes) node.type;
+compile(source, { generate: 'server' }).js.code;`;
+  assert.deepEqual(markedText(compiler, 'build.js'), [
+    'parse',
+    'compile',
+    'svelte',
+    'parse',
+    'modern',
+    'fragment',
+    'nodes',
+    'type',
+    'compile',
+    'generate',
+    'js',
+    'code',
+  ]);
+  const preprocess = 'export default { preprocess: [{ markup({ content }) { return { code: content }; } }] };';
+  assert.deepEqual(markedText(preprocess, 'svelte.config.js'), ['preprocess', 'markup', 'content', 'code', 'content']);
+  const adapter = `import { sveltekit } from '@sveltejs/kit/vite';
+sveltekit({ adapter: { name: 'mine', adapt(builder) { builder.log.minor('hi'); } } });`;
+  assert.deepEqual(markedText(adapter, 'vite.config.js'), [
+    'sveltekit',
+    '@sveltejs/kit',
+    'sveltekit',
+    'adapter',
+    'name',
+    'adapt',
+    'log',
+    'minor',
+  ]);
+});
+
+test('follows the items of a list Svelte gives you', () => {
+  const source = `export const load = ({ cookies }) => {
+  for (const cookie of cookies.getAll()) cookie.name;
+  cookies.getAll().map((item) => item.value);
+  return cookies.getAll()[0].name;
+};`;
+  assert.deepEqual(markedText(source, 'src/routes/+page.server.ts'), [
+    'load',
+    'cookies',
+    'cookies',
+    'getAll',
+    'name',
+    'cookies',
+    'getAll',
+    'value',
+    'cookies',
+    'getAll',
+    'name',
+  ]);
+});

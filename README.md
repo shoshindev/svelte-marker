@@ -8,10 +8,10 @@ It only adds a background, so your theme's text colors stay the same and it work
 
 ## Install
 
-You need VS Code 1.100 or newer. Download `svelte-marker-0.0.5.vsix`, then run:
+You need VS Code 1.100 or newer. Download `svelte-marker-0.0.6.vsix`, then run:
 
 ```bash
-code --install-extension svelte-marker-0.0.5.vsix
+code --install-extension svelte-marker-0.0.6.vsix
 ```
 
 Or open the Extensions view in VS Code, click the **...** menu at the top, and choose **Install from VSIX**.
@@ -39,10 +39,12 @@ Marks appear on their own when you open a Svelte file. Turn them on and off with
 | CSS | `:global` and the `()` in `:global(.a)`, `-global-` |
 | Imports | `svelte`, `$app`, `$env`, `$lib`, `#lib`, `$service-worker`, `@sveltejs/kit` and other `@sveltejs/` packages, `$types`, but not the rest of the path, like `/forms` in `$app/forms`, also in `import('./$types')` in a type or JSDoc |
 | Imported names | `onMount`, `fade`, `redirect`, `error`, `fail`, `goto`, `page`, and types like `Snippet` and `PageLoad`, wherever they're used, including `error` in `kit.error()`, `export { page } from` and `await import()` |
-| Members | `locals` in `event.locals`, `url` in `page.url`, `get` in `cookies.get()`, `set` on a store, `current` on a `Tween`, also after `const { params } = event` or `const e = event` |
+| Members | `locals` in `event.locals`, `url` in `page.url`, `get` in `cookies.get()`, `set` on a store, `current` on a `Tween` or on `innerWidth` from `svelte/reactivity/window`, `type` on what `deserialize()` returns, also after `const { params } = event`, `const e = event` or `for (const cookie of cookies.getAll())` |
+| Remote functions | `current`, `loading` and `refresh` on what a remote query returns, and `fields`, `pending` and `enhance` on a remote form, when you import them from a `.remote.ts` file |
 | Special exports | `load`, `actions`, `prerender`, `GET`, `POST`, `handle`, `match`, `snapshot`, plus `params` in `src/params.ts` and `variables` in `src/env.ts`, only in the file types where they mean something |
 | Fixed keys | `default` in `actions`, `replaceState` in `goto(url, { replaceState })`, `duration` in `transition:fade={{ duration }}`, `target` in `mount()`, `transformPageChunk` in `resolve()`, `message` in what `handleError` returns, `update` and `destroy` in what your own action returns |
-| Options | `kit`, `compilerOptions` and the rest in `svelte.config.js` and in `sveltekit({ ... })`, and adapter options like `out` in `adapter({ out })`, but not your own keys in `alias` |
+| Options | `kit`, `compilerOptions` and the rest in `svelte.config.js` and in `sveltekit({ ... })`, adapter options like `out` in `adapter({ out })`, and `markup` and `content` in a preprocessor, but not your own keys in `alias` |
+| Tools | the options and results of `compile()`, the syntax tree `parse()` returns, like `fragment` and `nodes`, `name` and `adapt` in an adapter you write, and Svelte 4's `new App({ target })` and `$set` |
 | Provided values | `params`, `url`, `cookies`, `request`, wherever they're used, as in `load({ params })` or `wrap(({ params }) => ...)`, and what Svelte passes to your callbacks, like `to` and `cancel` in `beforeNavigate(({ to, cancel }) => ...)` and `formData` in `use:enhance` |
 | Fixed props | `children` from `$props()`, plus `data`, `form` and `params` in `+page.svelte`, `data` and `params` in `+layout.svelte`, and `error` in `+error.svelte`, wherever they're used, also in `props.children` and legacy `export let data` |
 | Form actions | `?/` in `action="?/create"` and `formaction="/login?/register"` |
@@ -75,7 +77,7 @@ Against VS Code's ten built-in themes, text under the default marks meets the WC
 
 - Marks stay where they are while you type and catch up once the code is valid, because half-typed code can't be parsed. A file that opens with an error shows marks for whichever part parsed, its markup or its scripts, keeps them up to date as you type, and has no marks if both are broken.
 - Route names like `[slug]` and `+page` can't be marked, because they're file and folder names, not text in a file.
-- Marks follow a Svelte value within one file, and into the functions Svelte calls, like `load` or a `beforeNavigate` callback. In a helper you call yourself, like `function auth(event) { return event.locals; }`, `locals` stays unmarked, because nothing in that file says what `event` holds. A value that comes from another of your files stays unmarked for the same reason.
+- Marks follow a Svelte value within one file, and into the functions Svelte calls, like `load` or a `beforeNavigate` callback. In a helper you call yourself, like `function auth(event) { return event.locals; }`, `locals` stays unmarked, because nothing in that file says what `event` holds. A value that comes from another of your files stays unmarked for the same reason, unless the file's name says what it holds: a `.remote.ts` file exports remote functions, and a `.svelte` file exports a component.
 
 ## Contributing
 

@@ -86,6 +86,9 @@ const TAG_NODES = new Set([
 // {let  {const  a closing }  and the words `as`, `then` and `catch`.
 const TAG_SYNTAX = /\{\s*(?:[#:@/][a-z]+(?:\s+if\b)?|const\b|let\b)(?:\s*\})?|\}|\b(?:as|then|catch)\b/g;
 
+// Array methods that pass each item to a function.
+const ARRAY_CALLBACKS = new Set(['every', 'filter', 'find', 'findLast', 'flatMap', 'forEach', 'map', 'some']);
+
 // Function nodes. An `await` inside one is plain JS, even in the markup.
 const FUNCTION_NODES = new Set([
   'FunctionDeclaration',
@@ -353,8 +356,10 @@ function hasMember(shape: Shape | null, name: string | undefined): boolean {
   return Boolean(shape.anyMember) || Object.hasOwn(shape.members ?? {}, name) || Boolean(shape.older?.includes(name));
 }
 
+// What a member holds. Under a key of yours, like a field of a remote form, it
+// can still be something of Svelte's.
 function memberShape(shape: Shape | null, name: string): Shape | null {
-  return hasMember(shape, name) ? resolveShape(shape!.members?.[name]) : null;
+  return hasMember(shape, name) ? resolveShape(shape!.members?.[name]) : resolveShape(shape?.anyKey);
 }
 
 // A whole module, as `import * as kit` or `await import()` gives it.
@@ -748,7 +753,11 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
         return binding?.shape ?? null;
       }
       case 'MemberExpression':
-        return inner.computed ? null : memberShape(shapeOf(inner.object, scope), inner.property.name);
+        // `list[0]` holds one of the list's items.
+        if (inner.computed) {
+          return typeof inner.property.value === 'number' ? resolveShape(shapeOf(inner.object, scope)?.items) : null;
+        }
+        return memberShape(shapeOf(inner.object, scope), inner.property.name);
       case 'ChainExpression':
         return shapeOf(inner.expression, scope);
       case 'AwaitExpression':
@@ -779,12 +788,13 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       case 'ObjectPattern':
         return pattern.properties.flatMap((property: Node): [string, Binding][] => {
           const name = property.computed ? undefined : keyName(property.key);
-          if (!hasMember(shape, name)) return [];
-          add(property.key.start, property.key.end);
+          const isSvelteName = hasMember(shape, name);
+          if (!isSvelteName && !shape.anyKey) return [];
+          if (isSvelteName) add(property.key.start, property.key.end);
           const inner = memberShape(shape, name!);
           const value = property.value.type === 'AssignmentPattern' ? property.value.left : property.value;
           if (value.type !== 'Identifier') return bindPattern(value, inner);
-          const marked = value.name === name;
+          const marked = isSvelteName && value.name === name;
           return marked || inner ? [[value.name, { shape: inner, marked }]] : [];
         });
       default:
@@ -801,6 +811,11 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       node.params.forEach((param: Node, index: number) => {
         for (const [name, binding] of bindPattern(param, resolveShape(params[index]))) bound.set(name, binding);
       });
+    }
+    // `for (const cookie of cookies.getAll())` takes each item in turn.
+    if (node.type === 'ForOfStatement' && node.left.type === 'VariableDeclaration') {
+      const items = resolveShape(shapeOf(node.right, scope)?.items);
+      for (const [name, binding] of bindPattern(node.left.declarations[0].id, items)) bound.set(name, binding);
     }
     const statements =
       node.type === 'BlockStatement' || node.type === 'StaticBlock'
@@ -884,6 +899,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // name after `as` is yours. Type-only imports don't run anything.
   function markImportedNames(node: Node) {
     const importPath = node.source.value;
+    if (bindOwnModule(node)) return;
     if (!importsOwnNames(importPath)) return;
     for (const specifier of node.specifiers) {
       const local = specifier.local.name;
@@ -898,6 +914,20 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       // In `{ type Snippet }`, the word `type` is TypeScript and the name isn't.
       if (specifier.type === 'ImportSpecifier') add(specifier.imported.start, specifier.imported.end);
     }
+  }
+
+  // A .remote.ts file exports SvelteKit's remote functions, and a .svelte file
+  // exports a component. The names are yours, but what they hold isn't, as in
+  // `getPosts().current` or Svelte 4's `new App({ target })`.
+  function bindOwnModule(node: Node): boolean {
+    const isRemote = options.inKitProject && /\.remote(\.[jt]s)?$/.test(node.source.value);
+    const isComponent = node.source.value.endsWith('.svelte');
+    if (!isRemote && !isComponent) return false;
+    for (const specifier of node.specifiers) {
+      const shape = isRemote ? 'RemoteExport' : specifier.type === 'ImportDefaultSpecifier' ? 'LegacyComponent' : null;
+      if (shape) globals.set(specifier.local.name, { shape: resolveShape(shape), marked: false });
+    }
+    return true;
   }
 
   // `export { page } from '$app/state'` passes Svelte's name along.
@@ -928,6 +958,12 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   // Calls with Svelte's meaning that aren't runes, like `goto(url, { replaceState })`.
   function markCall(call: Node, scope: Scope) {
+    // `cookies.getAll().map((cookie) => ...)` passes each item to the function.
+    const method = call.callee.type === 'MemberExpression' && !call.callee.computed ? call.callee.property.name : '';
+    if (ARRAY_CALLBACKS.has(method)) {
+      const items = shapeOf(call.callee.object, scope)?.items;
+      if (items) expect(call.arguments[0], fn([items]), scope);
+    }
     if (options.runes && call.type === 'CallExpression') markRune(call);
     // import('svelte/store').then(({ get }) => ...)
     if (call.callee.property?.name === 'then' && isOwnImport(call.callee.object)) {

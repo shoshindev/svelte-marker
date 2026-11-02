@@ -2,7 +2,7 @@
   "name": "svelte-marker",
   "displayName": "Svelte Marker",
   "description": "Highlighter-style marks behind Svelte and SvelteKit syntax and names, so you can tell them apart from plain JavaScript, HTML and CSS.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "shoshindev",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -51,6 +51,7 @@
     "check": "tsc --noEmit",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/findMarks.test.ts test/svelteNames.test.ts",
     "vsix": "vsce package --no-dependencies",
+    "shapes": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generateShapes.ts",
     "vscode:prepublish": "node notices.mjs && node esbuild.mjs --production"
   },
   "devDependencies": {

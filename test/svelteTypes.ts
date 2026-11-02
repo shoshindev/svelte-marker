@@ -49,7 +49,7 @@ import type {
 import type { createRawSnippet, hydrate, MountOptions as SvelteMountOptions, unmount } from 'svelte';
 import type { Warning } from 'svelte/compiler';
 import type { ActionReturn as SvelteActionReturn } from 'svelte/action';
-import type { AnimationConfig as SvelteAnimationConfig, FlipParams as SvelteFlipParams } from 'svelte/animate';
+import type { AnimationConfig as SvelteAnimationConfig, flip, FlipParams as SvelteFlipParams } from 'svelte/animate';
 import type {
   Spring as SvelteSpring,
   SpringOptions as SvelteSpringOptions,
@@ -80,6 +80,7 @@ export type RequestEvent = KitRequestEvent;
 export type ServerLoadEvent = KitServerLoadEvent;
 export type LoadEvent = KitLoadEvent;
 export type Cookies = KitCookies;
+export type CookieItem = ReturnType<KitCookies['getAll']>[number];
 export type Route = KitRequestEvent['route'];
 export type Tracing = KitRequestEvent['tracing'];
 export type NavigationEvent = KitNavigationEvent;
@@ -175,6 +176,7 @@ export type RawSnippet = ReturnType<FirstArgument<typeof createRawSnippet>>;
 export type ActionReturn = SvelteActionReturn;
 export type TransitionConfig = SvelteTransitionConfig;
 export type AnimationConfig = SvelteAnimationConfig;
+export type AnimationPositions = Parameters<typeof flip>[1];
 export type BlurParams = SvelteBlurParams;
 export type CrossfadeOptions = FirstArgument<typeof crossfade>;
 export type CrossfadeParams = SvelteCrossfadeParams & { key: any };

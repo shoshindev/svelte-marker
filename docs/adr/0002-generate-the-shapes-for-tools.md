@@ -1,0 +1,3 @@
+# Generate the shapes for tools, and write the rest by hand
+
+The names Svelte's tools hold, like the compiler's syntax tree and the Adapter API, run to hundreds of places, so `scripts/generateShapes.ts` writes their shapes from the published types into `src/generatedShapes.ts`, and a test fails when that file falls behind. The shapes for app code stay hand-written in `src/shapes.ts`, because they carry what the types can't: names that SvelteKit 2 used, how SvelteKit calls `load` and the hooks, and what each special export holds. Generating everything would drop that knowledge, and writing everything by hand would leave the tool shapes out of date after each update.

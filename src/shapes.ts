@@ -3,7 +3,10 @@
 // and what each one holds in turn.
 //
 // test/svelteTypes.ts pairs each shape here with the Svelte or SvelteKit type it
-// copies, and test/svelteNames.test.ts checks that the names match.
+// copies, and test/svelteNames.test.ts checks that the names match. The rest,
+// mostly for tools built on Svelte, are generated into src/generatedShapes.ts.
+
+import { GENERATED_MODULES, GENERATED_SHAPES } from './generatedShapes.ts';
 
 // A shape is either a name in SHAPES or written out in place.
 export type ShapeRef = string | Shape;
@@ -39,9 +42,10 @@ export function plain(...names: string[]): Record<string, null> {
   return Object.fromEntries(names.map((name) => [name, null]));
 }
 
-// A transition takes the element first, then its options.
+// A transition takes the element first, then its options. You can call one
+// yourself, to change what it returns.
 function transition(options: string): Shape {
-  return fn([null, options]);
+  return fn([null, options], 'TransitionConfig');
 }
 
 const NAVIGATION = {
@@ -70,22 +74,25 @@ const REQUEST_EVENT = {
 };
 
 // The options svelte.config.js holds, which SvelteKit 3 takes in vite.config.js.
+// `onwarn` gets Svelte's own handler too, to pass the warning on to.
 const SVELTE_CONFIG = {
-  ...plain('extensions', 'preprocess'),
+  extensions: null,
   compilerOptions: 'CompilerOptions',
-  onwarn: fn(['CompilerWarning']),
+  onwarn: fn(['CompilerWarning', fn(['CompilerWarning'])]),
+  preprocess: 'Preprocessors',
 };
 
 // The options of vite-plugin-svelte, which runs Svelte inside Vite.
 const PLUGIN_OPTIONS = {
   ...plain('disableDependencyReinclusion', 'emitCss', 'exclude', 'include', 'prebundleSvelteLibraries'),
-  dynamicCompileOptions: fn(['DynamicCompileInput']),
+  dynamicCompileOptions: fn(['DynamicCompileInput'], 'CompileOptions'),
   inspector: 'InspectorOptions',
 };
 
 const TRANSITION_CONFIG = plain('css', 'delay', 'duration', 'easing', 'tick');
 
-export const SHAPES: Record<string, Shape> = {
+// The shapes written by hand.
+export const HAND_SHAPES: Record<string, Shape> = {
   // What SvelteKit hands your functions.
   RequestEvent: { members: REQUEST_EVENT },
   ServerLoadEvent: { members: { ...REQUEST_EVENT, ...plain('depends', 'parent', 'untrack') } },
@@ -96,7 +103,10 @@ export const SHAPES: Record<string, Shape> = {
       tracing: 'Tracing',
     },
   },
-  Cookies: { members: plain('delete', 'get', 'getAll', 'parse', 'serialize', 'set') },
+  Cookies: {
+    members: { ...plain('delete', 'get', 'parse', 'serialize', 'set'), getAll: fn([], { items: 'CookieItem' }) },
+  },
+  CookieItem: { members: plain('name', 'value') },
   Route: { members: plain('id') },
   Tracing: { members: plain('current', 'enabled', 'root') },
   NavigationEvent: { members: { ...plain('params', 'url'), route: 'Route' } },
@@ -178,8 +188,9 @@ export const SHAPES: Record<string, Shape> = {
     members: {
       ...SVELTE_CONFIG,
       ...PLUGIN_OPTIONS,
-      ...plain('adapter', 'alias', 'appDir', 'configFile', 'embedded', 'inlineStyleThreshold'),
+      ...plain('alias', 'appDir', 'configFile', 'embedded', 'inlineStyleThreshold'),
       ...plain('moduleExtensions', 'outDir'),
+      adapter: 'Adapter',
       csp: 'KitCsp',
       csrf: 'KitCsrf',
       env: 'KitEnv',
@@ -249,10 +260,10 @@ export const SHAPES: Record<string, Shape> = {
     },
   },
   CompileModuleOptions: { members: plain('exclude', 'extensions', 'include', 'infixes') },
-  DynamicCompileInput: { members: plain('code', 'compileOptions', 'environment', 'filename') },
+  DynamicCompileInput: { members: { ...plain('code', 'environment', 'filename'), compileOptions: 'CompileOptions' } },
   InspectorOptions: {
     members: {
-      ...plain('__internal', 'customStyles', 'escapeKeys', 'holdMode', 'openKey', 'openMenuKey'),
+      ...plain('customStyles', 'escapeKeys', 'holdMode', 'openKey', 'openMenuKey'),
       ...plain('showToggleButton', 'toggleButtonPos', 'toggleKeyCombo'),
       navKeys: 'InspectorKeys',
     },
@@ -298,6 +309,7 @@ export const SHAPES: Record<string, Shape> = {
   ActionReturn: { members: plain('destroy', 'update') },
   TransitionConfig: { members: TRANSITION_CONFIG },
   AnimationConfig: { members: TRANSITION_CONFIG },
+  AnimationPositions: { members: plain('from', 'to') },
   BlurParams: { members: plain('amount', 'delay', 'duration', 'easing', 'opacity') },
   CrossfadeOptions: {
     members: {
@@ -333,14 +345,14 @@ export const SHAPES: Record<string, Shape> = {
 };
 
 // What each module's exports hold, for the ones that hold more than a name.
-export const MODULE_SHAPES: Record<string, Record<string, ShapeRef>> = {
+export const HAND_MODULE_SHAPES: Record<string, Record<string, ShapeRef>> = {
   svelte: {
     createRawSnippet: fn([fn([], 'RawSnippet')]),
     hydrate: fn([null, 'HydrateOptions']),
     mount: fn([null, 'MountOptions']),
     unmount: fn([null, 'UnmountOptions']),
   },
-  'svelte/animate': { flip: fn([null, null, 'FlipParams']) },
+  'svelte/animate': { flip: fn([null, 'AnimationPositions', 'FlipParams'], 'AnimationConfig') },
   'svelte/motion': {
     prefersReducedMotion: 'MediaQuery',
     Spring: 'SpringClass',
@@ -359,7 +371,8 @@ export const MODULE_SHAPES: Record<string, Record<string, ShapeRef>> = {
   },
   'svelte/transition': {
     blur: transition('BlurParams'),
-    crossfade: fn(['CrossfadeOptions'], { items: transition('CrossfadeParams') }),
+    // The pair crossfade() returns gives back a function that makes the transition.
+    crossfade: fn(['CrossfadeOptions'], { items: fn([null, 'CrossfadeParams'], fn([], 'TransitionConfig')) }),
     draw: transition('DrawParams'),
     fade: transition('FadeParams'),
     fly: transition('FlyParams'),
@@ -374,14 +387,16 @@ export const MODULE_SHAPES: Record<string, Record<string, ShapeRef>> = {
   '@sveltejs/kit/vite': { sveltekit: fn(['KitConfig']) },
   '@sveltejs/vite-plugin-svelte': {
     svelte: fn(['SveltePluginOptions']),
-    vitePreprocess: fn(['VitePreprocessOptions']),
+    vitePreprocess: fn(['VitePreprocessOptions'], 'Preprocessors'),
   },
-  '@sveltejs/adapter-cloudflare': { default: fn(['AdapterCloudflareOptions']) },
-  '@sveltejs/adapter-netlify': { default: fn(['AdapterNetlifyOptions']) },
-  '@sveltejs/adapter-node': { default: fn(['AdapterNodeOptions']) },
-  '@sveltejs/adapter-static': { default: fn(['AdapterStaticOptions']) },
-  '@sveltejs/adapter-vercel': { default: fn(['AdapterVercelOptions']) },
-  '$app/forms': { enhance: fn([null, fn(['SubmitInput'], fn(['SubmitResultInput']))]) },
+  '@sveltejs/adapter-cloudflare': { default: fn(['AdapterCloudflareOptions'], 'Adapter') },
+  '@sveltejs/adapter-netlify': { default: fn(['AdapterNetlifyOptions'], 'Adapter') },
+  '@sveltejs/adapter-node': { default: fn(['AdapterNodeOptions'], 'Adapter') },
+  '@sveltejs/adapter-static': { default: fn(['AdapterStaticOptions'], 'Adapter') },
+  '@sveltejs/adapter-vercel': { default: fn(['AdapterVercelOptions'], 'Adapter') },
+  '$app/forms': {
+    enhance: fn([null, fn(['SubmitInput'], fn(['SubmitResultInput']))], { members: plain('destroy') }),
+  },
   '$app/navigation': {
     afterNavigate: fn([fn(['AfterNavigate'])]),
     beforeNavigate: fn([fn(['BeforeNavigate'])]),
@@ -398,6 +413,15 @@ export const MODULE_SHAPES: Record<string, Record<string, ShapeRef>> = {
     updated: { members: plain('check', 'subscribe') },
   },
 };
+
+export const SHAPES: Record<string, Shape> = { ...GENERATED_SHAPES, ...HAND_SHAPES };
+
+export const MODULE_SHAPES: Record<string, Record<string, ShapeRef>> = Object.fromEntries(
+  [...new Set([...Object.keys(GENERATED_MODULES), ...Object.keys(HAND_MODULE_SHAPES)])].map((path) => [
+    path,
+    { ...GENERATED_MODULES[path], ...HAND_MODULE_SHAPES[path] },
+  ]),
+);
 
 // Your own action, transition or animation returns an object Svelte reads.
 export const OWN_DIRECTIVES: Record<string, Shape> = {
