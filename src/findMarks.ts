@@ -8,18 +8,21 @@
 // We walk that tree and note where the Svelte-specific nodes are.
 
 import { parse } from 'svelte/compiler';
-import { fn, MODULE_SHAPES, OWN_DIRECTIVES, type Shape, type ShapeRef, SHAPES } from './shapes.ts';
+import { fn, MODULE_SHAPES, OWN_DIRECTIVES, type Shape, type ShapeRef, SHAPES, SVELTE_OPTIONS } from './shapes.ts';
 import {
   allowsRunes,
   APP_TYPES,
   importsOwnNames,
   isKitTemplate,
+  isOwnImportedName,
   isSvelteConfig,
   kitProps,
+  linkOptionValues,
   markedImportPart,
   RUNES,
   SCRIPT_ATTRIBUTES,
   specialExports,
+  TRANSITION_EVENT,
 } from './svelteNames.ts';
 
 // One highlighter stroke, as character offsets into the file.
@@ -99,6 +102,12 @@ const FUNCTION_NODES = new Set([
 // The nodes that take `slot` children and CSS variables.
 const COMPONENT_NODES = new Set(['Component', 'SvelteComponent', 'SvelteSelf']);
 
+// The elements that can have a transition, and so fire Svelte's transition events.
+const ELEMENT_NODES = new Set(['RegularElement', 'SvelteElement']);
+
+// Comparisons that can test a value against a string Svelte fixes.
+const EQUALITY = new Set(['===', '!==', '==', '!=']);
+
 // The words that turn an ordinary comment into an instruction for Svelte.
 // svelte-ignore only counts at the very start of a comment. @component only counts
 // in the markup, but anywhere in the comment: that's how the Svelte tools read it.
@@ -116,8 +125,13 @@ const CSS_SYNTAX = /:global(?![\w-])|(?<=@(?:-[a-z]+-)?keyframes\s+)-global-/g;
 const CSS_NON_CODE =
   /\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'|url\([^)]*\)|\/\/.*$/gm;
 
-// The only Svelte syntax in SvelteKit's app.html and error.html.
-const KIT_TEMPLATE_SYNTAX = /%sveltekit\.[\w.]+%|data-sveltekit-[a-z-]+/g;
+// The only Svelte syntax in SvelteKit's app.html and error.html: placeholders like
+// %sveltekit.head%, and link options like data-sveltekit-preload-data="hover".
+const KIT_PLACEHOLDER = /%sveltekit\.[\w.$]+%/g;
+const KIT_LINK_OPTION = /data-sveltekit-([a-z-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+
+// In %sveltekit.env.PUBLIC_NAME%, the name is your variable.
+const KIT_ENV_PLACEHOLDER = '%sveltekit.env.';
 
 // The (?=...) stops these matching custom elements like <style-guide>. Comments
 // and scripts are matched too, so that a <style> written inside one isn't taken
@@ -489,9 +503,13 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   // Stops `const a = b; const b = a;` from going round forever.
   const following = new Set<Node>();
 
-  // Where the walk is. `await` is only Svelte syntax directly in the markup.
+  // Where the walk is. `await` is Svelte syntax in three places: in the markup, at
+  // the top of a component's main script, and in $derived(...). There Svelte waits
+  // for it while the rest of the page runs on. Inside a function it's plain JS again.
   let inMarkup = false;
+  let inInstance = false;
   let functionDepth = 0;
+  let derivedDepth = -1; // the functionDepth of the $derived(...) the walk is in
 
   function add(start: number, end: number) {
     if (start >= 0 && start < end) marks.push({ start, end });
@@ -557,15 +575,27 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     return position;
   }
 
-  // `as goal (goal.id)` names each item and says how to track it. Plain JS would
-  // read `goal (goal.id)` as a function call, so the whole stretch is marked.
+  // `as goal, i (goal.id)` names each item and its index, which plain JS has no
+  // way to write. Plain JS would read `goal (goal.id)` as a function call, so the
+  // ( ) around the key are the block's too. The key inside them is plain JS.
   function markEachNames(node: Node) {
     const tagEnd = text.indexOf('}', (node.key ?? node.context ?? node.expression).end);
     const firstChildStart = node.body.nodes[0]?.start ?? endOf(node);
     if (tagEnd < 0 || tagEnd >= firstChildStart) return;
-    if (node.context) add(afterPreviousWord(node.context.start), tagEnd);
+    const afterItem = node.context?.end ?? node.expression.end;
+    const index = node.index ? text.slice(afterItem, tagEnd).match(/^\s*,\s*[\p{L}\p{N}_$]+/u) : null;
+    const namesEnd = afterItem + (index?.[0].length ?? 0);
     // `{#each a, i}` names only the index.
-    else if (node.index) add(text.lastIndexOf(',', tagEnd), afterPreviousWord(tagEnd));
+    if (node.context) add(afterPreviousWord(node.context.start), namesEnd);
+    else if (index) add(afterItem + index[0].indexOf(','), namesEnd);
+
+    if (!node.key) return;
+    const opening = text.indexOf('(', namesEnd);
+    const closing = text.lastIndexOf(')', tagEnd);
+    if (opening >= 0 && opening < node.key.start && closing >= node.key.end) {
+      add(opening, opening + 1);
+      add(closing, closing + 1);
+    }
   }
 
   // Marks the ( ) of a call. They come after the name and any <Type>.
@@ -632,6 +662,14 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       add(closing, closing + 1);
     }
 
+    // `bind:value={get, set}` passes a getter and a setter. Plain JS would read the
+    // comma as the comma operator, which throws the getter away.
+    if (node.type === 'BindDirective' && node.expression?.type === 'SequenceExpression') {
+      const [getter, setter] = node.expression.expressions;
+      const comma = setter ? text.slice(getter.end, setter.start).replace(JS_COMMENT, blankOut).indexOf(',') : -1;
+      if (comma >= 0) add(getter.end + comma, getter.end + comma + 1);
+    }
+
     const own = OWN_DIRECTIVES[node.type];
     if (!own) return;
     const [first, ...rest] = node.name.split('.');
@@ -658,12 +696,25 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
   }
 
+  // Marks the value of an attribute when it's one of the strings Svelte fixes, like
+  // `hover` in data-sveltekit-preload-data="hover".
+  function markFixedText(value: any, fixed: string[] | undefined) {
+    const parts = [value].flat();
+    if (parts.length === 1 && parts[0]?.type === 'Text' && fixed?.includes(parts[0].data)) {
+      add(parts[0].start, parts[0].end);
+    }
+  }
+
   function markAttribute(node: Node, parent?: Node) {
     markActionQuery(node);
+    if (node.name.startsWith('data-sveltekit-')) {
+      markFixedText(node.value, linkOptionValues(node.name.slice('data-sveltekit-'.length)));
+    }
     const isSpecial =
       node.name.startsWith('data-sveltekit-') ||
       (node.name.startsWith('--') && COMPONENT_NODES.has(parent?.type ?? '')) ||
       (parent?.type === 'Script' && SCRIPT_ATTRIBUTES.has(node.name)) ||
+      (ELEMENT_NODES.has(parent?.type ?? '') && TRANSITION_EVENT.test(node.name)) ||
       parent?.type === 'SvelteBoundary'; // pending, failed and onerror are all Svelte's
     // Shorthand: {name} is both the attribute and its value.
     const isShorthand = text[node.start] === '{';
@@ -767,6 +818,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
         if (options.component && inner.callee.type === 'Identifier' && inner.callee.name === '$props') {
           return options.props;
         }
+        // `$inspect(x).with((type) => ...)`
+        if (options.runes && inner.callee.type === 'Identifier' && inner.callee.name === '$inspect') {
+          return resolveShape('InspectResult');
+        }
         return resolveShape(shapeOf(inner.callee, scope)?.returns);
       default:
         return null;
@@ -857,6 +912,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       case 'ArrayExpression':
         for (const item of inner.elements) expect(item, shape.items, scope);
         break;
+      case 'Literal':
+      case 'TemplateLiteral':
+        markFixedValue(inner, shape);
+        break;
       case 'ConditionalExpression':
         expect(inner.consequent, shape, scope);
         expect(inner.alternate, shape, scope);
@@ -884,6 +943,15 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     }
   }
 
+  // Marks a string whose text Svelte fixes, like 'auto' in `prerender = 'auto'`.
+  // The quotes are plain JS, so only the text between them gets the mark.
+  function markFixedValue(value: any, shape: Shape | null) {
+    const inner = withoutWrappers(value);
+    const isPlainTemplate = inner?.type === 'TemplateLiteral' && inner.expressions.length === 0;
+    const string = isPlainTemplate ? inner.quasis[0].value.cooked : inner?.value;
+    if (typeof string === 'string' && shape?.values?.includes(string)) add(inner.start + 1, endOf(inner) - 1);
+  }
+
   function expectFunction(node: Node, shape: Shape) {
     if (shape.returns) for (const result of returnedValues(node)) expect(result, shape.returns);
     if (!shape.args) return;
@@ -908,6 +976,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
         continue;
       }
       const imported = specifier.type === 'ImportDefaultSpecifier' ? 'default' : keyName(specifier.imported)!;
+      if (!isOwnImportedName(importPath, imported)) continue;
       const exports = MODULE_SHAPES[importPath] ?? {};
       const shape = Object.hasOwn(exports, imported) ? resolveShape(exports[imported]) : null;
       globals.set(local, { shape, marked: local === imported });
@@ -932,9 +1001,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   // `export { page } from '$app/state'` passes Svelte's name along.
   function markReexportedNames(node: Node) {
-    if (!importsOwnNames(String(node.source?.value))) return;
+    const importPath = String(node.source?.value);
     for (const specifier of node.specifiers) {
-      if (keyName(specifier.local) !== 'default') add(specifier.local.start, specifier.local.end);
+      const name = keyName(specifier.local);
+      if (name !== 'default' && isOwnImportedName(importPath, name!)) add(specifier.local.start, specifier.local.end);
     }
   }
 
@@ -1117,7 +1187,15 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
     } else if (node.type === 'Comment') {
       markCommentKeyword(node.start + '<!--'.length, node.data, MARKUP_COMMENT_KEYWORD);
     } else if (node.type === 'AwaitExpression') {
-      if (inMarkup && functionDepth === 0) add(node.start, node.start + 'await'.length);
+      const isSvelteAwait = (functionDepth === 0 && (inMarkup || inInstance)) || derivedDepth === functionDepth;
+      if (isSvelteAwait) add(node.start, node.start + 'await'.length);
+    } else if (node.type === 'BinaryExpression' && EQUALITY.has(node.operator)) {
+      // `result.type === 'success'`
+      markFixedValue(node.right, shapeOf(node.left, scope));
+      markFixedValue(node.left, shapeOf(node.right, scope));
+    } else if (node.type === 'SwitchStatement') {
+      const shape = shapeOf(node.discriminant, scope);
+      for (const item of node.cases) markFixedValue(item.test, shape);
     } else if (node.type === 'Identifier') {
       const binding = lookup(node.name, scope);
       const isStore = binding === undefined && isStoreName(node.name);
@@ -1168,6 +1246,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       functionDepth++;
       walkedFunctions.add(value);
     }
+    const outerDerived = derivedDepth;
+    if (options.runes && value.type === 'CallExpression' && value.callee.name === '$derived') {
+      derivedDepth = functionDepth;
+    }
     for (const [childField, child] of Object.entries(value)) {
       if (childField === 'metadata') continue; // parser bookkeeping
       if (TYPE_FIELDS.has(childField)) {
@@ -1176,6 +1258,7 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       }
       visit(child, withLocals(scope, namesInPart(value, childField)), value, childField);
     }
+    derivedDepth = outerDerived;
     if (isFunction) functionDepth--;
   }
 
@@ -1202,10 +1285,15 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
 
   // <svelte:options> is the one special element that isn't in the tree as a
   // node, and every attribute on it belongs to Svelte.
+  // The values it takes are Svelte's too, like `svg` in namespace="svg", and the
+  // keys and values in customElement={{ shadow: 'none' }}.
   if (ast.options) {
     markElementTags('svelte:options', ast.options);
     for (const attribute of ast.options.attributes as any[]) {
       add(attribute.start, attribute.start + attribute.name.length);
+      const option = memberShape(resolveShape(SVELTE_OPTIONS), attribute.name);
+      markFixedText(attribute.value, option?.values);
+      expect([attribute.value].flat().find((part) => part?.type === 'ExpressionTag')?.expression, option);
     }
     visit(ast.options.attributes, new Map());
   }
@@ -1227,7 +1315,10 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
   }
 
   visit(ast.module, new Map());
+  // A .js or .ts file is parsed as a component's main script, but it isn't one.
+  inInstance = options.component;
   visit(ast.instance, new Map());
+  inInstance = false;
   inMarkup = true;
   visit(ast.fragment, new Map());
 
@@ -1283,11 +1374,25 @@ function findModuleMarks(source: string, filePath: string, inKitProject: boolean
 }
 
 function findTemplateMarks(source: string): MarkResult {
-  const marks = [...source.matchAll(KIT_TEMPLATE_SYNTAX)].map((match) => ({
-    start: match.index,
-    end: match.index + match[0].length,
-  }));
-  return { marks, complete: true };
+  const marks: Mark[] = [];
+  for (const match of source.matchAll(KIT_PLACEHOLDER)) {
+    const end = match.index + match[0].length;
+    if (match[0].startsWith(KIT_ENV_PLACEHOLDER)) {
+      marks.push({ start: match.index, end: match.index + KIT_ENV_PLACEHOLDER.length }, { start: end - 1, end });
+    } else {
+      marks.push({ start: match.index, end });
+    }
+  }
+  for (const match of source.matchAll(KIT_LINK_OPTION)) {
+    const name = 'data-sveltekit-'.length + match[1].length;
+    marks.push({ start: match.index, end: match.index + name });
+    const value = match[2] ?? match[3] ?? match[4];
+    if (value && linkOptionValues(match[1])?.includes(value)) {
+      const end = match.index + match[0].length - (match[4] === undefined ? 1 : 0);
+      marks.push({ start: end - value.length, end });
+    }
+  }
+  return { marks: marks.sort((a, b) => a.start - b.start), complete: true };
 }
 
 export function findMarks(source: string, filePath = 'Component.svelte', inKitProject = true): MarkResult {

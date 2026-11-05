@@ -1,7 +1,8 @@
 // Checks the shapes in src/shapes.ts and src/generatedShapes.ts against the types
 // that Svelte, SvelteKit and the official adapters publish. An update that adds,
 // renames or removes a name makes this fail: add the new name to the shape, or
-// move a removed one to the shape's `older` list, and run `npm run shapes`. A new
+// move a removed one to the shape's `older` list, and run `npm run shapes`. The
+// same goes for the strings a value can be, which a shape lists in `values`. A new
 // export with names of its own fails it too, until it has a shape or a line in
 // LEFT_OUT, in scripts/typeReader.ts, that says why it has none.
 //   npm test
@@ -13,6 +14,7 @@ import { generateShapes, OUTPUT_FILE } from '../scripts/generateShapes.ts';
 import {
   checker,
   exportedTypes,
+  fixedValues,
   HAND_TYPES_FILE,
   isArray,
   isLeftOut,
@@ -27,8 +29,16 @@ import {
   ts,
   typeErrors,
 } from '../scripts/typeReader.ts';
-import { HAND_SHAPES, MODULE_SHAPES, OWN_DIRECTIVES, type Shape, type ShapeRef, SHAPES } from '../src/shapes.ts';
-import { kitProps, specialExports } from '../src/svelteNames.ts';
+import {
+  HAND_SHAPES,
+  MODULE_SHAPES,
+  OWN_DIRECTIVES,
+  type Shape,
+  type ShapeRef,
+  SHAPES,
+  SVELTE_OPTIONS,
+} from '../src/shapes.ts';
+import { kitProps, LINK_OPTIONS, PRERENDER, specialExports, TRAILING_SLASH, TRANSITION_EVENT } from '../src/svelteNames.ts';
 
 test('the type files have no type errors', () => {
   assert.deepEqual(typeErrors(), []);
@@ -104,6 +114,8 @@ test('every shape named anywhere exists', () => {
     'src/routes/+error.svelte',
   ];
   const refs = [
+    SVELTE_OPTIONS,
+    'InspectResult',
     ...Object.values(SHAPES),
     ...Object.values(MODULE_SHAPES).flatMap((exports) => Object.values(exports)),
     ...Object.values(OWN_DIRECTIVES),
@@ -113,37 +125,57 @@ test('every shape named anywhere exists', () => {
   assert.deepEqual([...new Set(missing)], []);
 });
 
-// Walks a type next to the shape that should describe it, and notes each place
-// where the type has names from Svelte's files that the shape doesn't cover.
+// Walks the types at one place next to the shape that should describe them, and
+// notes where they have names from Svelte's files that the shape doesn't cover, or
+// strings they can be that differ from the shape's `values`. As in the generator,
+// the kinds of a union count together: `type` on a form result can be 'success' on
+// one kind and 'failure' on another, and the shape lists both.
 function findGaps(
-  type: ts.Type,
+  types: readonly ts.Type[],
   ref: ShapeRef | null | undefined,
   position: string,
   gaps: Map<string, Set<string>>,
   seen = new Set<ts.Type>(),
+  depth = 0,
 ) {
-  if (seen.has(type) || seen.size > 7 || isLeftOut(position)) return;
-  seen = new Set(seen).add(type);
+  // A place whose types were all met higher up is a loop, like the children of an
+  // element, which are elements again. A place with some new ones still counts all
+  // of them, so that its values aren't cut short.
+  if (types.every((type) => seen.has(type)) || depth > 7 || isLeftOut(position)) return;
+  const kinds = [...new Set(types.flatMap(kindsOf))];
+  seen = new Set([...seen, ...types, ...kinds]);
   const shape = resolveShape(ref);
-  for (const kind of kindsOf(type)) {
-    if (kind !== type && seen.has(kind)) continue;
-    if (isArray(kind)) {
-      for (const item of itemTypes(kind)) findGaps(item, shape?.items, `${position}[]`, gaps, seen);
-      continue;
-    }
-    if (!isObject(kind)) continue;
-    const members = svelteMembers(kind);
-    const missing = members.filter((item) => !hasMember(shape, item.name)).map((item) => item.name);
-    if (missing.length > 0) gaps.set(position, new Set([...(gaps.get(position) ?? []), ...missing]));
-    for (const member of members) {
-      findGaps(checker.getTypeOfSymbol(member), shape?.members?.[member.name], `${position}.${member.name}`, gaps, seen);
-    }
-    for (const signature of signaturesOf(kind)) {
-      signature.getParameters().forEach((parameter, index) => {
-        findGaps(checker.getTypeOfSymbol(parameter), shape?.args?.[index], `${position}(${index})`, gaps, seen);
-      });
-      findGaps(signature.getReturnType(), shape?.returns, `${position}=>`, gaps, seen);
-    }
+  const note = (items: string[]) => {
+    if (items.length > 0) gaps.set(position, new Set([...(gaps.get(position) ?? []), ...items]));
+  };
+
+  const strings = fixedValues(types).join(', ');
+  const listed = [...new Set(shape?.values ?? [])].sort().join(', ');
+  if (strings !== listed) note([`values ${strings || 'none'}, not ${listed || 'none'}`]);
+
+  const items = kinds.filter(isArray).flatMap(itemTypes);
+  if (items.length > 0) findGaps(items, shape?.items, `${position}[]`, gaps, seen, depth + 1);
+
+  const objects = kinds.filter((kind) => !isArray(kind) && isObject(kind));
+  const members = new Map<string, ts.Type[]>();
+  for (const member of objects.flatMap(svelteMembers)) {
+    members.set(member.name, [...(members.get(member.name) ?? []), checker.getTypeOfSymbol(member)]);
+  }
+  note([...members.keys()].filter((name) => !hasMember(shape, name)));
+  for (const [name, memberTypes] of members) {
+    findGaps(memberTypes, shape?.members?.[name], `${position}.${name}`, gaps, seen, depth + 1);
+  }
+
+  const signatures = objects.flatMap(signaturesOf);
+  const count = Math.max(0, ...signatures.map((signature) => signature.getParameters().length));
+  for (let index = 0; index < count; index++) {
+    const parameters = signatures.flatMap((signature) => signature.getParameters()[index] ?? []);
+    const parameterTypes = parameters.map((item) => checker.getTypeOfSymbol(item));
+    findGaps(parameterTypes, shape?.args?.[index], `${position}(${index})`, gaps, seen, depth + 1);
+  }
+  if (signatures.length > 0) {
+    const returned = signatures.map((signature) => signature.getReturnType());
+    findGaps(returned, shape?.returns, `${position}=>`, gaps, seen, depth + 1);
   }
 }
 
@@ -154,7 +186,7 @@ test('every export of Svelte and SvelteKit has its names covered, or a reason in
     for (const { name, symbol } of moduleExports(module)) {
       if (symbol.flags & ts.SymbolFlags.Type) typeExports.set(`${path}:${name}`, symbol);
       if (symbol.flags & ts.SymbolFlags.Value) {
-        findGaps(checker.getTypeOfSymbol(symbol), MODULE_SHAPES[path]?.[name], `${path}:${name}`, gaps);
+        findGaps([checker.getTypeOfSymbol(symbol)], MODULE_SHAPES[path]?.[name], `${path}:${name}`, gaps);
       }
     }
   }
@@ -177,9 +209,102 @@ test('every export of Svelte and SvelteKit has its names covered, or a reason in
   for (const [typeName, file, exportName] of called) {
     const symbol = typeExports.get(typeName);
     assert.ok(symbol, `SvelteKit no longer has ${typeName}`);
-    findGaps(checker.getDeclaredTypeOfSymbol(symbol), specialExports(file)[exportName], `${file} ${exportName}`, gaps);
+    findGaps([checker.getDeclaredTypeOfSymbol(symbol)], specialExports(file)[exportName], `${file} ${exportName}`, gaps);
+  }
+
+  // The shapes written by hand that no export leads to, like what's in svelte.config.js.
+  const reached = new Set<string>();
+  const reach = (ref: ShapeRef | null | undefined) => {
+    for (const name of namedShapes(ref)) {
+      if (reached.has(name)) continue;
+      reached.add(name);
+      reach(SHAPES[name]);
+    }
+  };
+  for (const exports of Object.values(MODULE_SHAPES)) Object.values(exports).forEach(reach);
+  for (const [, file, exportName] of called) reach(specialExports(file)[exportName]);
+  for (const [name, type] of exportedTypes(HAND_TYPES_FILE)) {
+    if (!reached.has(name)) findGaps([type], HAND_SHAPES[name], name, gaps);
   }
 
   const uncovered = [...gaps].map(([position, names]) => `${position}: ${[...names].join(', ')}`);
-  assert.deepEqual(uncovered, [], `Names with no shape and no reason in LEFT_OUT:\n${uncovered.join('\n')}`);
+  assert.deepEqual(uncovered, [], `Names or strings with no shape and no reason in LEFT_OUT:\n${uncovered.join('\n')}`);
+});
+
+// Finds a type alias by name in a file of SvelteKit's, for the ones it doesn't export.
+function kitTypeAlias(path: string, name: string): ts.TypeAliasDeclaration {
+  const file = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest);
+  const alias = file.statements.find((item) => ts.isTypeAliasDeclaration(item) && item.name.text === name);
+  assert.ok(alias, `${path} no longer has ${name}`);
+  return alias as ts.TypeAliasDeclaration;
+}
+
+function literalsIn(node: ts.Node): string[] {
+  if (ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal)) return [node.literal.text];
+  const found: string[] = [];
+  node.forEachChild((child) => {
+    found.push(...literalsIn(child));
+  });
+  return found;
+}
+
+test('the page options list the same strings as SvelteKit', () => {
+  const kit = new URL('../node_modules/@sveltejs/kit/src/types/private.d.ts', import.meta.url);
+  const path = kit.pathname;
+  assert.deepEqual(PRERENDER.values, literalsIn(kitTypeAlias(path, 'PrerenderOption')).sort());
+  assert.deepEqual(TRAILING_SLASH.values, literalsIn(kitTypeAlias(path, 'TrailingSlash')).sort());
+});
+
+test('the link options list the same values as SvelteKit', () => {
+  const path = new URL('../node_modules/@sveltejs/kit/src/runtime/client/utils.js', import.meta.url).pathname;
+  const file = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
+  let found: ts.ObjectLiteralExpression | undefined;
+  const search = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(file) === 'valid_link_options') {
+      let value = node.initializer;
+      while (value && ts.isParenthesizedExpression(value)) value = value.expression;
+      if (value && ts.isObjectLiteralExpression(value)) found = value;
+    }
+    node.forEachChild(search);
+  };
+  search(file);
+  assert.ok(found, 'SvelteKit no longer has valid_link_options');
+  const kit = Object.fromEntries(
+    found.properties.filter(ts.isPropertyAssignment).map((property) => {
+      const name = ts.isStringLiteral(property.name) ? property.name.text : property.name.getText(file);
+      const items = (property.initializer as ts.ArrayLiteralExpression).elements.map((item) => (item as ts.StringLiteral).text);
+      return [name, items.filter(Boolean).sort()];
+    }),
+  );
+  const ours = Object.fromEntries(
+    Object.entries(LINK_OPTIONS)
+      .filter(([, option]) => option.values.length > 0)
+      .map(([name, option]) => [name, option.values]),
+  );
+  assert.deepEqual(ours, kit);
+  for (const [name, option] of Object.entries(LINK_OPTIONS)) {
+    for (const value of option.older ?? []) assert.ok(!kit[name]?.includes(value), `${name}="${value}" is current again`);
+  }
+});
+
+// Events of the web platform that TypeScript's own DOM types don't list.
+const WEB_EVENTS_TYPESCRIPT_LACKS = new Set(['contentvisibilityautostatechange', 'dragexit', 'encrypted']);
+
+test("Svelte's transition events are the only events Svelte names on an element", () => {
+  const elements = svelteModules().get('svelte/elements');
+  assert.ok(elements, 'test/svelteTypes.ts no longer imports svelte/elements');
+  const attributes = moduleExports(elements).find((item) => item.name === 'HTMLAttributes');
+  const dom = checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(attributes!.symbol));
+  const webEvents = new Set(
+    ['HTMLElementEventMap', 'WindowEventMap', 'DocumentEventMap', 'SVGElementEventMap'].flatMap((name) => {
+      const symbol = checker.resolveName(name, undefined, ts.SymbolFlags.Type, false);
+      return symbol ? checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(symbol)).map((item) => item.name) : [];
+    }),
+  );
+  const svelteEvents = dom
+    .map((item) => item.name)
+    .filter((name) => /^on[a-z]+$/.test(name) && !name.endsWith('capture'))
+    .filter((name) => !webEvents.has(name.slice(2)) && !WEB_EVENTS_TYPESCRIPT_LACKS.has(name.slice(2)));
+  assert.deepEqual(svelteEvents.filter((name) => !TRANSITION_EVENT.test(name)), []);
+  assert.deepEqual(svelteEvents.sort(), ['onintroend', 'onintrostart', 'onoutroend', 'onoutrostart']);
 });

@@ -52,12 +52,13 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       css: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css',
       cssHash: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.cssHash',
       cssOutputFilename: null,
-      customElement: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css',
+      customElement: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.customElement',
       dev: null, discloseVersion: null,
       experimental: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.experimental',
-      fragments: null, hmr: null, immutable: null, modernAst: null, name: null, namespace: null,
-      outputFilename: null, preserveComments: null, preserveWhitespace: null, rootDir: null,
-      runes: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css',
+      fragments: { values: ['html', 'tree'] }, hmr: null, immutable: null, modernAst: null,
+      name: null, namespace: { values: ['html', 'mathml', 'svg'] }, outputFilename: null,
+      preserveComments: null, preserveWhitespace: null, rootDir: null,
+      runes: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.customElement',
       sourcemap: null,
       warningFilter: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.warningFilter',
     },
@@ -69,6 +70,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css': {
     args: ['@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css(0)'],
+    returns: { values: ['external', 'injected'] },
+    values: ['external', 'injected'],
   },
   '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css(0)': {
     members: {
@@ -82,6 +85,9 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       css: null, filename: null, hash: null, name: null,
     },
+  },
+  '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.customElement': {
+    args: ['@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css(0)'],
   },
   '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.experimental': {
     members: {
@@ -121,7 +127,9 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       customStyles: null, escapeKeys: null, holdMode: null,
       navKeys: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).inspector.navKeys', openKey: null,
-      openMenuKey: null, showToggleButton: null, toggleButtonPos: null, toggleKeyCombo: null,
+      openMenuKey: null, showToggleButton: { values: ['active', 'always', 'never'] },
+      toggleButtonPos: { values: ['bottom-left', 'bottom-right', 'top-left', 'top-right'] },
+      toggleKeyCombo: null,
     },
   },
   '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).inspector.navKeys': {
@@ -183,7 +191,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '$app/forms.ActionResult': {
     members: {
-      error: null, location: null, status: null, type: null, data: null,
+      error: null, location: null, status: null,
+      type: { values: ['error', 'failure', 'redirect', 'success'] }, data: null,
     },
   },
   '$app/manifest:immutable': {
@@ -207,7 +216,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '$app/navigation:preloadData=>': {
     members: {
-      error: null, status: null, type: null, data: null, location: null,
+      error: null, status: null, type: { values: ['error', 'loaded', 'redirect'] }, data: null,
+      location: null,
     },
   },
   '$app/paths.match': {
@@ -219,6 +229,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     },
   },
   '$app/server.command': {
+    args: [{ values: ['unchecked'] }, null],
     returns: '$app/server:command=>',
   },
   '$app/server:command=>': {
@@ -233,6 +244,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     },
   },
   '$app/server.form': {
+    args: [{ values: ['unchecked'] }, null],
     returns: '$app/server:form=>',
   },
   '$app/server:form=>': {
@@ -331,7 +343,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     },
   },
   '$app/server.prerender': {
-    args: [null, '$app/server:prerender(1)', '$app/server:prerender(2)'],
+    args: [{ values: ['unchecked'] }, '$app/server:prerender(1)', '$app/server:prerender(2)'],
     returns: '$app/server:prerender=>',
   },
   '$app/server:prerender(1)': {
@@ -356,9 +368,11 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       batch: '$app/server.query.batch', live: '$app/server.query.live',
     },
+    args: [{ values: ['unchecked'] }, null],
     returns: '$app/server:query.batch=>',
   },
   '$app/server.query.batch': {
+    args: [{ values: ['unchecked'] }, null],
     returns: '$app/server:query.batch=>',
   },
   '$app/server:query.batch=>': {
@@ -371,6 +385,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     },
   },
   '$app/server.query.live': {
+    args: [{ values: ['unchecked'] }, null],
     returns: '$app/server:query.live=>',
   },
   '$app/server:query.live=>': {
@@ -481,7 +496,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       dev: null,
       experimental: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.experimental',
-      filename: null, generate: null, rootDir: null,
+      filename: null, generate: { values: ['client', 'server'] }, rootDir: null,
       warningFilter: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.warningFilter',
     },
   },
@@ -499,7 +514,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       comments: 'svelte/compiler:parse=>.comments', css: 'svelte/compiler._CSS.StyleSheet',
       end: null, fragment: 'svelte/compiler.AST.Fragment', instance: 'svelte/compiler.AST.Script',
       module: 'svelte/compiler.AST.Script', options: 'svelte/compiler.AST.SvelteOptions',
-      start: null, type: null,
+      start: null, type: { values: ['Root'] },
     },
   },
   'svelte/compiler:parse=>.comments': {
@@ -526,7 +541,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       attributes: null, children: 'svelte/compiler:parse=>.css.children',
       comments: 'svelte/compiler:parse=>.css.comments',
-      content: 'svelte/compiler:parse=>.css.content', end: null, start: null, type: null,
+      content: 'svelte/compiler:parse=>.css.content', end: null, start: null,
+      type: { values: ['StyleSheet'] },
     },
   },
   'svelte/compiler:parse=>.css.children': {
@@ -536,13 +552,13 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       block: 'svelte/compiler:parse=>.css.children[].block', end: null, name: null,
       prelude: 'svelte/compiler:parse=>.css.children[].block.children[].prelude', start: null,
-      type: null,
+      type: { values: ['Atrule', 'Rule'] },
     },
   },
   'svelte/compiler:parse=>.css.children[].block': {
     members: {
       children: 'svelte/compiler:parse=>.css.children[].block.children', end: null, start: null,
-      type: null,
+      type: { values: ['Block'] },
     },
   },
   'svelte/compiler:parse=>.css.children[].block.children': {
@@ -552,13 +568,13 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       block: 'svelte/compiler:parse=>.css.children[].block', end: null, name: null,
       prelude: 'svelte/compiler:parse=>.css.children[].block.children[].prelude', start: null,
-      type: null, property: null, value: null,
+      type: { values: ['Atrule', 'Declaration', 'Rule'] }, property: null, value: null,
     },
   },
   'svelte/compiler:parse=>.css.children[].block.children[].prelude': {
     members: {
       children: 'svelte/compiler:parse=>.css.children[].block.children[].prelude.children',
-      end: null, start: null, type: null,
+      end: null, start: null, type: { values: ['SelectorList'] },
     },
   },
   'svelte/compiler:parse=>.css.children[].block.children[].prelude.children': {
@@ -567,7 +583,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   'svelte/compiler._CSS.ComplexSelector': {
     members: {
       children: 'svelte/compiler:parse=>.css.children[].block.children[].prelude.children[].children',
-      end: null, start: null, type: null,
+      end: null, start: null, type: { values: ['ComplexSelector'] },
     },
   },
   'svelte/compiler:parse=>.css.children[].block.children[].prelude.children[].children': {
@@ -577,12 +593,12 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       combinator: 'svelte/compiler._CSS.Combinator', end: null,
       selectors: 'svelte/compiler:parse=>.css.children[].block.children[].prelude.children[].children[].selectors',
-      start: null, type: null,
+      start: null, type: { values: ['RelativeSelector'] },
     },
   },
   'svelte/compiler._CSS.Combinator': {
     members: {
-      end: null, name: null, start: null, type: null,
+      end: null, name: null, start: null, type: { values: ['Combinator'] },
     },
   },
   'svelte/compiler:parse=>.css.children[].block.children[].prelude.children[].children[].selectors': {
@@ -590,8 +606,10 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   'svelte/compiler._CSS.SimpleSelector': {
     members: {
-      end: null, flags: null, matcher: null, name: null, start: null, type: null, value: null,
-      args: 'svelte/compiler:parse=>.css.children[].block.children[].prelude', namespace: null,
+      end: null, flags: null, matcher: null, name: null, start: null,
+      type: { values: ['AttributeSelector', 'ClassSelector', 'IdSelector', 'NestingSelector', 'Nth', 'Percentage', 'PseudoClassSelector', 'PseudoElementSelector', 'TypeSelector'] },
+      value: null, args: 'svelte/compiler:parse=>.css.children[].block.children[].prelude',
+      namespace: null,
     },
   },
   'svelte/compiler:parse=>.css.comments': {
@@ -609,12 +627,12 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   'svelte/compiler.AST.Comment': {
     members: {
-      data: null, end: null, start: null, type: null,
+      data: null, end: null, start: null, type: { values: ['Comment'] },
     },
   },
   'svelte/compiler.AST.Fragment': {
     members: {
-      nodes: 'svelte/compiler:parse=>.fragment.nodes', type: null,
+      nodes: 'svelte/compiler:parse=>.fragment.nodes', type: { values: ['Fragment'] },
     },
   },
   'svelte/compiler:parse=>.fragment.nodes': {
@@ -623,9 +641,10 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   'svelte/compiler:parse=>.fragment.nodes[]': {
     members: {
       end: null, expression: 'svelte/compiler:parse=>.fragment.nodes[].expression', start: null,
-      type: null, catch: 'svelte/compiler.AST.Fragment', error: null,
-      pending: 'svelte/compiler.AST.Fragment', then: 'svelte/compiler.AST.Fragment', value: null,
-      data: null, attributes: 'svelte/compiler:parse=>.fragment.nodes[].attributes',
+      type: { values: ['AttachTag', 'AwaitBlock', 'Comment', 'Component', 'ConstTag', 'DebugTag', 'DeclarationTag', 'EachBlock', 'ExpressionTag', 'HtmlTag', 'IfBlock', 'KeyBlock', 'RegularElement', 'RenderTag', 'SlotElement', 'SnippetBlock', 'SvelteBody', 'SvelteBoundary', 'SvelteComponent', 'SvelteDocument', 'SvelteElement', 'SvelteFragment', 'SvelteHead', 'SvelteOptions', 'SvelteSelf', 'SvelteWindow', 'Text', 'TitleElement'] },
+      catch: 'svelte/compiler.AST.Fragment', error: null, pending: 'svelte/compiler.AST.Fragment',
+      then: 'svelte/compiler.AST.Fragment', value: null, data: null,
+      attributes: 'svelte/compiler:parse=>.fragment.nodes[].attributes',
       fragment: 'svelte/compiler.AST.Fragment', name: null, name_loc: null,
       declaration: 'svelte/compiler:parse=>.fragment.nodes[].declaration', identifiers: null,
       body: 'svelte/compiler.AST.Fragment', context: null, fallback: 'svelte/compiler.AST.Fragment',
@@ -644,21 +663,27 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   'svelte/compiler:parse=>.fragment.nodes[].attributes[]': {
     members: {
-      end: null, expression: null, name: null, name_loc: null, start: null, type: null,
-      value: 'svelte/compiler:parse=>.fragment.nodes[].attributes[].value', modifiers: null,
-      intro: null, outro: null,
+      end: null, expression: null, name: null, name_loc: null, start: null,
+      type: { values: ['AnimateDirective', 'AttachTag', 'Attribute', 'BindDirective', 'ClassDirective', 'LetDirective', 'OnDirective', 'SpreadAttribute', 'StyleDirective', 'TransitionDirective', 'UseDirective'] },
+      value: 'svelte/compiler:parse=>.fragment.nodes[].attributes[].value',
+      modifiers: 'svelte/compiler:parse=>.fragment.nodes[].attributes[].modifiers', intro: null,
+      outro: null,
     },
   },
   'svelte/compiler:parse=>.fragment.nodes[].attributes[].value': {
     members: {
-      end: null, expression: null, start: null, type: null,
+      end: null, expression: null, start: null, type: { values: ['ExpressionTag'] },
     },
     items: 'svelte/compiler:parse=>.fragment.nodes[].attributes[].value[]',
   },
   'svelte/compiler:parse=>.fragment.nodes[].attributes[].value[]': {
     members: {
-      end: null, expression: null, start: null, type: null, data: null, raw: null,
+      end: null, expression: null, start: null, type: { values: ['ExpressionTag', 'Text'] },
+      data: null, raw: null,
     },
+  },
+  'svelte/compiler:parse=>.fragment.nodes[].attributes[].modifiers': {
+    items: { values: ['capture', 'global', 'important', 'local', 'nonpassive', 'once', 'passive', 'preventDefault', 'self', 'stopImmediatePropagation', 'stopPropagation', 'trusted'] },
   },
   'svelte/compiler:parse=>.fragment.nodes[].declaration': {
     members: {
@@ -675,8 +700,9 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   'svelte/compiler.AST.Script': {
     members: {
-      attributes: 'svelte/compiler:parse=>.instance.attributes', content: null, context: null,
-      end: null, start: null, type: null,
+      attributes: 'svelte/compiler:parse=>.instance.attributes', content: null,
+      context: { values: ['default', 'module'] }, end: null, start: null,
+      type: { values: ['Script'] },
     },
   },
   'svelte/compiler:parse=>.instance.attributes': {
@@ -684,21 +710,22 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   'svelte/compiler.AST.Attribute': {
     members: {
-      end: null, name: null, name_loc: null, start: null, type: null,
+      end: null, name: null, name_loc: null, start: null, type: { values: ['Attribute'] },
       value: 'svelte/compiler:parse=>.fragment.nodes[].attributes[].value',
     },
   },
   'svelte/compiler.AST.SvelteOptions': {
     members: {
-      accessors: null, attributes: 'svelte/compiler:parse=>.instance.attributes', css: null,
-      customElement: 'svelte/compiler:parse=>.options.customElement', end: null, immutable: null,
-      namespace: null, preserveWhitespace: null, runes: null, start: null,
+      accessors: null, attributes: 'svelte/compiler:parse=>.instance.attributes',
+      css: { values: ['injected'] }, customElement: 'svelte/compiler:parse=>.options.customElement',
+      end: null, immutable: null, namespace: { values: ['html', 'mathml', 'svg'] },
+      preserveWhitespace: null, runes: null, start: null,
     },
   },
   'svelte/compiler:parse=>.options.customElement': {
     members: {
-      extend: null, props: 'svelte/compiler:parse=>.options.customElement.props', shadow: null,
-      tag: null,
+      extend: null, props: 'svelte/compiler:parse=>.options.customElement.props',
+      shadow: { values: ['none', 'open'] }, tag: null,
     },
   },
   'svelte/compiler:parse=>.options.customElement.props': {
@@ -706,7 +733,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   'svelte/compiler:parse=>.options.customElement.props[key]': {
     members: {
-      attribute: null, reflect: null, type: null,
+      attribute: null, reflect: null,
+      type: { values: ['Array', 'Boolean', 'Number', 'Object', 'String'] },
     },
   },
   'svelte/compiler.parseCss': {
@@ -715,7 +743,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   'svelte/compiler._CSS.StyleSheetFile': {
     members: {
       children: 'svelte/compiler:parse=>.css.children',
-      comments: 'svelte/compiler:parse=>.css.comments', end: null, start: null, type: null,
+      comments: 'svelte/compiler:parse=>.css.comments', end: null, start: null,
+      type: { values: ['StyleSheetFile'] },
     },
   },
   'svelte/compiler.preprocess': {
@@ -729,7 +758,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   'svelte/compiler.AST.SvelteNode': {
     members: {
       end: null, expression: 'svelte/compiler:parse=>.fragment.nodes[].expression', name: null,
-      name_loc: null, start: null, type: null,
+      name_loc: null, start: null,
+      type: { values: ['AnimateDirective', 'Atrule', 'AttachTag', 'Attribute', 'AttributeSelector', 'AwaitBlock', 'BindDirective', 'Block', 'ClassDirective', 'ClassSelector', 'Combinator', 'Comment', 'ComplexSelector', 'Component', 'ConstTag', 'DebugTag', 'Declaration', 'DeclarationTag', 'EachBlock', 'ExpressionTag', 'Fragment', 'HtmlTag', 'IdSelector', 'IfBlock', 'KeyBlock', 'LetDirective', 'NestingSelector', 'Nth', 'OnDirective', 'Percentage', 'PseudoClassSelector', 'PseudoElementSelector', 'RegularElement', 'RelativeSelector', 'RenderTag', 'Root', 'Rule', 'Script', 'SelectorList', 'SlotElement', 'SnippetBlock', 'SpreadAttribute', 'StyleDirective', 'StyleSheet', 'SvelteBody', 'SvelteBoundary', 'SvelteComponent', 'SvelteDocument', 'SvelteElement', 'SvelteFragment', 'SvelteHead', 'SvelteOptions', 'SvelteSelf', 'SvelteWindow', 'Text', 'TitleElement', 'TransitionDirective', 'TypeSelector', 'UseDirective'] },
       block: 'svelte/compiler:parse=>.css.children[].block',
       prelude: 'svelte/compiler:parse=>.css.children[].block.children[].prelude',
       value: 'svelte/compiler:parse=>.fragment.nodes[].attributes[].value', flags: null,
@@ -739,10 +769,12 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       attributes: 'svelte/compiler:parse=>.fragment.nodes[].attributes',
       fragment: 'svelte/compiler.AST.Fragment',
       declaration: 'svelte/compiler:parse=>.fragment.nodes[].declaration', identifiers: null,
-      property: null, body: 'svelte/compiler.AST.Fragment', context: null,
-      fallback: 'svelte/compiler.AST.Fragment', index: null, key: null,
-      nodes: 'svelte/compiler:parse=>.fragment.nodes', alternate: 'svelte/compiler.AST.Fragment',
-      consequent: 'svelte/compiler.AST.Fragment', elseif: null, test: null, modifiers: null,
+      property: null, body: 'svelte/compiler.AST.Fragment',
+      context: { values: ['default', 'module'] }, fallback: 'svelte/compiler.AST.Fragment',
+      index: null, key: null, nodes: 'svelte/compiler:parse=>.fragment.nodes',
+      alternate: 'svelte/compiler.AST.Fragment', consequent: 'svelte/compiler.AST.Fragment',
+      elseif: null, test: null,
+      modifiers: 'svelte/compiler:parse=>.fragment.nodes[].attributes[].modifiers',
       args: 'svelte/compiler:parse=>.css.children[].block.children[].prelude',
       combinator: 'svelte/compiler._CSS.Combinator',
       selectors: 'svelte/compiler:parse=>.css.children[].block.children[].prelude.children[].children[].selectors',
@@ -760,7 +792,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
     members: {
       block: 'svelte/compiler:parse=>.css.children[].block', end: null, name: null,
       prelude: 'svelte/compiler:parse=>.css.children[].block.children[].prelude', start: null,
-      type: null, property: null, value: null, combinator: 'svelte/compiler._CSS.Combinator',
+      type: { values: ['Atrule', 'ComplexSelector', 'Declaration', 'RelativeSelector', 'Rule'] },
+      property: null, value: null, combinator: 'svelte/compiler._CSS.Combinator',
       selectors: 'svelte/compiler:parse=>.css.children[].block.children[].prelude.children[].children[].selectors',
       children: 'svelte/compiler:parse=>.css.children[].block.children[].prelude.children[].children',
     },
@@ -904,11 +937,11 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       onwarn: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).onwarn', outDir: null,
       output: '@sveltejs/kit.RecursiveRequired#14', paths: '@sveltejs/kit.RecursiveRequired#15',
       prebundleSvelteLibraries: null, preprocess: 'Preprocessors',
-      prerender: '@sveltejs/kit.RecursiveRequired#16', router: '@sveltejs/kit.RecursiveRequired#17',
+      prerender: '@sveltejs/kit.RecursiveRequired#16', router: '@sveltejs/kit.RecursiveRequired#18',
       serviceWorker: 'Adapter.adapt(0).config.serviceWorker',
-      tracing: '@sveltejs/kit.RecursiveRequired#19',
+      tracing: '@sveltejs/kit.RecursiveRequired#20',
       typescript: 'Adapter.adapt(0).config.typescript',
-      version: '@sveltejs/kit.RecursiveRequired#20',
+      version: '@sveltejs/kit.RecursiveRequired#21',
     },
   },
   'Adapter.adapt(0).config.adapter.emulate': {
@@ -992,7 +1025,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '@sveltejs/kit.RecursiveRequired#14': {
     members: {
-      bundleStrategy: null, linkHeaderPreload: null, preloadStrategy: null,
+      bundleStrategy: { values: ['inline', 'single', 'split'] }, linkHeaderPreload: null,
+      preloadStrategy: { values: ['modulepreload', 'preload-js', 'preload-mjs'] },
     },
   },
   '@sveltejs/kit.RecursiveRequired#15': {
@@ -1012,6 +1046,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '@sveltejs/kit/vite.PrerenderEntryGeneratorMismatchHandlerValue': {
     args: ['Adapter.adapt(0).config.prerender.handleEntryGeneratorMismatch(0)'],
+    values: ['fail', 'ignore', 'warn'],
   },
   'Adapter.adapt(0).config.prerender.handleEntryGeneratorMismatch(0)': {
     members: {
@@ -1020,14 +1055,17 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '@sveltejs/kit/vite.PrerenderHttpErrorHandlerValue': {
     args: ['Adapter.adapt(0).config.prerender.handleHttpError(0)'],
+    values: ['fail', 'ignore', 'warn'],
   },
   'Adapter.adapt(0).config.prerender.handleHttpError(0)': {
     members: {
-      message: null, path: null, referenceType: null, referrer: null, status: null,
+      message: null, path: null, referenceType: { values: ['fetched', 'linked'] }, referrer: null,
+      status: null,
     },
   },
   '@sveltejs/kit/vite.PrerenderInvalidUrlHandlerValue': {
     args: ['Adapter.adapt(0).config.prerender.handleInvalidUrl(0)'],
+    values: ['fail', 'ignore', 'warn'],
   },
   'Adapter.adapt(0).config.prerender.handleInvalidUrl(0)': {
     members: {
@@ -1036,6 +1074,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '@sveltejs/kit/vite.PrerenderMissingIdHandlerValue': {
     args: ['Adapter.adapt(0).config.prerender.handleMissingId(0)'],
+    values: ['fail', 'ignore', 'warn'],
   },
   'Adapter.adapt(0).config.prerender.handleMissingId(0)': {
     members: {
@@ -1044,15 +1083,16 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   },
   '@sveltejs/kit/vite.PrerenderUnseenRoutesHandlerValue': {
     args: ['Adapter.adapt(0).config.prerender.handleUnseenRoutes(0)'],
+    values: ['fail', 'ignore', 'warn'],
   },
   'Adapter.adapt(0).config.prerender.handleUnseenRoutes(0)': {
     members: {
       message: null, routes: null,
     },
   },
-  '@sveltejs/kit.RecursiveRequired#17': {
+  '@sveltejs/kit.RecursiveRequired#18': {
     members: {
-      resolution: null, type: null,
+      resolution: { values: ['client', 'server'] }, type: { values: ['hash', 'pathname'] },
     },
   },
   'Adapter.adapt(0).config.serviceWorker': {
@@ -1060,7 +1100,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       options: null, register: null,
     },
   },
-  '@sveltejs/kit.RecursiveRequired#19': {
+  '@sveltejs/kit.RecursiveRequired#20': {
     members: {
       server: null,
     },
@@ -1070,7 +1110,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       config: null,
     },
   },
-  '@sveltejs/kit.RecursiveRequired#20': {
+  '@sveltejs/kit.RecursiveRequired#21': {
     members: {
       name: null, pollInterval: null,
     },
@@ -1093,8 +1133,8 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
   '@sveltejs/kit.RouteDefinition': {
     members: {
       api: 'Adapter.adapt(0).createEntries(0)(0).api', config: null, id: null, methods: null,
-      page: 'Adapter.adapt(0).createEntries(0)(0).api', pattern: null, prerender: null,
-      segments: 'Adapter.adapt(0).createEntries(0)(0).segments',
+      page: 'Adapter.adapt(0).createEntries(0)(0).api', pattern: null,
+      prerender: { values: ['auto'] }, segments: 'Adapter.adapt(0).createEntries(0)(0).segments',
     },
   },
   'Adapter.adapt(0).createEntries(0)(0).api': {
@@ -1290,20 +1330,21 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       css: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css',
       cssHash: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.cssHash',
       cssOutputFilename: null,
-      customElement: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css',
+      customElement: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.customElement',
       dev: null, discloseVersion: null,
       experimental: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.experimental',
-      filename: null, fragments: null, generate: null, hmr: null, immutable: null, modernAst: null,
-      name: null, namespace: null, outputFilename: null, preserveComments: null,
-      preserveWhitespace: null, rootDir: null,
-      runes: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.css',
+      filename: null, fragments: { values: ['html', 'tree'] },
+      generate: { values: ['client', 'server'] }, hmr: null, immutable: null, modernAst: null,
+      name: null, namespace: { values: ['html', 'mathml', 'svg'] }, outputFilename: null,
+      preserveComments: null, preserveWhitespace: null, rootDir: null,
+      runes: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.customElement',
       sourcemap: null,
       warningFilter: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).compilerOptions.warningFilter',
     },
   },
   '@sveltejs/kit.RecursiveRequired': {
     members: {
-      directives: null, mode: null, reportOnly: null,
+      directives: null, mode: { values: ['auto', 'hash', 'nonce'] }, reportOnly: null,
     },
   },
 };

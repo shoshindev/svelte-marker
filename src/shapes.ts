@@ -30,12 +30,23 @@ export interface Shape {
   items?: ShapeRef;
   // What `$store` holds, for a store.
   value?: ShapeRef;
+  // The strings it can be, whose text Svelte fixes, like 'success' for the
+  // `type` of a form result.
+  values?: string[];
 }
 
 // A function with these arguments, and what it returns.
 export function fn(args: (ShapeRef | null)[], returns?: ShapeRef): Shape {
   return returns ? { args, returns } : { args };
 }
+
+// A string that can only be one of these.
+export function values(...items: string[]): Shape {
+  return { values: items };
+}
+
+// What <svelte:options> takes, in the syntax tree that parse() returns.
+export const SVELTE_OPTIONS = 'svelte/compiler.AST.SvelteOptions';
 
 // Members that hold plain values.
 export function plain(...names: string[]): Record<string, null> {
@@ -48,11 +59,14 @@ function transition(options: string): Shape {
   return fn([null, options], 'TransitionConfig');
 }
 
+// What a navigation holds. Its `type` says how it started, and each kind of
+// callback sees a different set of those.
 const NAVIGATION = {
-  ...plain('complete', 'delta', 'event', 'shallow', 'type', 'willUnload'),
+  ...plain('complete', 'delta', 'event', 'shallow', 'willUnload'),
   from: 'NavigationTarget',
   to: 'NavigationTarget',
 };
+const NAVIGATION_TYPE = values('form', 'goto', 'leave', 'link', 'popstate');
 
 const REQUEST_EVENT = {
   ...plain(
@@ -91,6 +105,16 @@ const PLUGIN_OPTIONS = {
 
 const TRANSITION_CONFIG = plain('css', 'delay', 'duration', 'easing', 'tick');
 
+// What SvelteKit does about a problem while prerendering: one of these, or your
+// function decides.
+function prerenderHandler(input: string): Shape {
+  return { ...fn([input]), ...values('fail', 'ignore', 'warn') };
+}
+
+// Whether the compiler puts a component's CSS in its JS or in a file of its own.
+// A function can decide that per file.
+const CSS_OUTPUT = values('external', 'injected');
+
 // The shapes written by hand.
 export const HAND_SHAPES: Record<string, Shape> = {
   // What SvelteKit hands your functions.
@@ -123,14 +147,18 @@ export const HAND_SHAPES: Record<string, Shape> = {
     },
   },
   PageChunk: { members: plain('done', 'html') },
-  PreloadInput: { members: plain('filename', 'path', 'type') },
+  PreloadInput: { members: { ...plain('filename', 'path'), type: values('asset', 'css', 'font', 'js') } },
   HandleFetchInput: { members: { ...plain('fetch', 'request'), event: 'RequestEvent' } },
   ServerErrorInput: {
-    members: { ...plain('error', 'issues', 'kind'), event: 'RequestEvent' },
+    members: {
+      ...plain('error', 'issues'),
+      event: 'RequestEvent',
+      kind: values('app', 'framework', 'unknown', 'validation'),
+    },
     older: ['message', 'status'],
   },
   ClientErrorInput: {
-    members: { ...plain('error', 'issues', 'kind'), event: 'NavigationEvent' },
+    members: { ...plain('error', 'issues'), event: 'NavigationEvent', kind: values('app', 'framework', 'unknown') },
     older: ['message', 'status'],
   },
   RerouteInput: { members: plain('fetch', 'url') },
@@ -166,10 +194,10 @@ export const HAND_SHAPES: Record<string, Shape> = {
   },
   NavigationTarget: { members: { ...plain('params', 'url'), route: 'Route', scroll: 'ScrollPosition' } },
   ScrollPosition: { members: plain('x', 'y') },
-  Navigation: { members: NAVIGATION },
-  BeforeNavigate: { members: { ...NAVIGATION, cancel: null } },
-  AfterNavigate: { members: NAVIGATION },
-  OnNavigate: { members: NAVIGATION },
+  Navigation: { members: { ...NAVIGATION, type: NAVIGATION_TYPE } },
+  BeforeNavigate: { members: { ...NAVIGATION, cancel: null, type: NAVIGATION_TYPE } },
+  AfterNavigate: { members: { ...NAVIGATION, type: values('enter', 'form', 'goto', 'link', 'popstate') } },
+  OnNavigate: { members: { ...NAVIGATION, type: values('form', 'goto', 'link', 'popstate') } },
 
   // Forms.
   SubmitInput: { members: plain('action', 'cancel', 'controller', 'formData', 'formElement', 'submitter') },
@@ -181,7 +209,9 @@ export const HAND_SHAPES: Record<string, Shape> = {
     },
   },
   UpdateOptions: { members: plain('invalidateAll', 'navigate', 'refreshAll', 'reset') },
-  ActionResult: { members: plain('data', 'error', 'location', 'status', 'type') },
+  ActionResult: {
+    members: { ...plain('data', 'error', 'location', 'status'), type: values('error', 'failure', 'redirect', 'success') },
+  },
 
   // SvelteKit's options, passed to sveltekit() in vite.config.js.
   KitConfig: {
@@ -206,7 +236,7 @@ export const HAND_SHAPES: Record<string, Shape> = {
       version: 'KitVersion',
     },
   },
-  KitCsp: { members: plain('directives', 'mode', 'reportOnly') },
+  KitCsp: { members: { ...plain('directives', 'reportOnly'), mode: values('auto', 'hash', 'nonce') } },
   KitCsrf: { members: plain('checkOrigin', 'trustedOrigins') },
   KitEnv: { members: plain('dir'), older: ['privatePrefix', 'publicPrefix'] },
   KitExperimental: {
@@ -223,25 +253,33 @@ export const HAND_SHAPES: Record<string, Shape> = {
     older: ['lib'],
   },
   KitHookFiles: { members: plain('client', 'server', 'universal') },
-  KitOutput: { members: plain('bundleStrategy', 'linkHeaderPreload', 'preloadStrategy') },
+  KitOutput: {
+    members: {
+      linkHeaderPreload: null,
+      bundleStrategy: values('inline', 'single', 'split'),
+      preloadStrategy: values('modulepreload', 'preload-js', 'preload-mjs'),
+    },
+  },
   KitPaths: { members: plain('assets', 'base', 'origin', 'relative') },
   KitPrerender: {
     members: {
       ...plain('concurrency', 'crawl', 'entries'),
-      handleEntryGeneratorMismatch: fn(['PrerenderEntryMismatch']),
-      handleHttpError: fn(['PrerenderHttpError']),
-      handleInvalidUrl: fn(['PrerenderInvalidUrl']),
-      handleMissingId: fn(['PrerenderMissingId']),
-      handleUnseenRoutes: fn(['PrerenderUnseenRoutes']),
+      handleEntryGeneratorMismatch: prerenderHandler('PrerenderEntryMismatch'),
+      handleHttpError: prerenderHandler('PrerenderHttpError'),
+      handleInvalidUrl: prerenderHandler('PrerenderInvalidUrl'),
+      handleMissingId: prerenderHandler('PrerenderMissingId'),
+      handleUnseenRoutes: prerenderHandler('PrerenderUnseenRoutes'),
     },
     older: ['origin'],
   },
-  PrerenderHttpError: { members: plain('message', 'path', 'referenceType', 'referrer', 'status') },
+  PrerenderHttpError: {
+    members: { ...plain('message', 'path', 'referrer', 'status'), referenceType: values('fetched', 'linked') },
+  },
   PrerenderMissingId: { members: plain('id', 'message', 'path', 'referrers') },
   PrerenderEntryMismatch: { members: plain('entry', 'generatedFromId', 'matchedId', 'message') },
   PrerenderUnseenRoutes: { members: plain('message', 'routes') },
   PrerenderInvalidUrl: { members: plain('href', 'message', 'referrer') },
-  KitRouter: { members: plain('resolution', 'type') },
+  KitRouter: { members: { resolution: values('client', 'server'), type: values('hash', 'pathname') } },
   KitServiceWorker: { members: plain('options', 'register'), older: ['files'] },
   KitTracing: { members: plain('server') },
   KitTypescript: { members: plain('config') },
@@ -263,20 +301,22 @@ export const HAND_SHAPES: Record<string, Shape> = {
   DynamicCompileInput: { members: { ...plain('code', 'environment', 'filename'), compileOptions: 'CompileOptions' } },
   InspectorOptions: {
     members: {
-      ...plain('customStyles', 'escapeKeys', 'holdMode', 'openKey', 'openMenuKey'),
-      ...plain('showToggleButton', 'toggleButtonPos', 'toggleKeyCombo'),
+      ...plain('customStyles', 'escapeKeys', 'holdMode', 'openKey', 'openMenuKey', 'toggleKeyCombo'),
       navKeys: 'InspectorKeys',
+      showToggleButton: values('active', 'always', 'never'),
+      toggleButtonPos: values('bottom-left', 'bottom-right', 'top-left', 'top-right'),
     },
   },
   InspectorKeys: { members: plain('child', 'next', 'parent', 'prev') },
   VitePreprocessOptions: { members: plain('script', 'style') },
   CompilerOptions: {
     members: {
-      ...plain('accessors', 'cssOutputFilename', 'dev', 'discloseVersion', 'fragments', 'hmr', 'immutable'),
-      ...plain('modernAst', 'name', 'namespace', 'outputFilename', 'preserveComments', 'preserveWhitespace'),
-      ...plain('rootDir', 'sourcemap'),
+      ...plain('accessors', 'cssOutputFilename', 'dev', 'discloseVersion', 'hmr', 'immutable', 'modernAst'),
+      ...plain('name', 'outputFilename', 'preserveComments', 'preserveWhitespace', 'rootDir', 'sourcemap'),
       compatibility: 'CompilerCompatibility',
-      css: fn(['CompilerFile']),
+      css: { ...fn(['CompilerFile'], CSS_OUTPUT), ...CSS_OUTPUT },
+      fragments: values('html', 'tree'),
+      namespace: values('html', 'mathml', 'svg'),
       cssHash: fn(['CssHashInput']),
       customElement: fn(['CompilerFile']),
       experimental: 'CompilerExperimental',
@@ -291,7 +331,9 @@ export const HAND_SHAPES: Record<string, Shape> = {
   CompilerWarning: { members: plain('code', 'end', 'filename', 'frame', 'message', 'position', 'stack', 'start') },
 
   // The official adapters.
-  AdapterCloudflareOptions: { members: { ...plain('config', 'fallback', 'platformProxy'), routes: 'CloudflareRoutes' } },
+  AdapterCloudflareOptions: {
+    members: { ...plain('config', 'platformProxy'), fallback: values('plaintext', 'spa'), routes: 'CloudflareRoutes' },
+  },
   CloudflareRoutes: { members: plain('exclude', 'include') },
   AdapterNetlifyOptions: { members: plain('edge', 'publish', 'split') },
   AdapterNodeOptions: { members: plain('envPrefix', 'out', 'precompress') },
@@ -302,7 +344,8 @@ export const HAND_SHAPES: Record<string, Shape> = {
   VercelIsr: { members: plain('allowQuery', 'bypassToken', 'expiration') },
 
   // Svelte.
-  MountOptions: { members: plain('anchor', 'context', 'events', 'intro', 'props', 'target', 'transformError') },
+  InspectResult: { members: { with: fn([fn([values('init', 'update')])]) } },
+  MountOptions:{ members: plain('anchor', 'context', 'events', 'intro', 'props', 'target', 'transformError') },
   HydrateOptions: { members: plain('context', 'events', 'intro', 'props', 'recover', 'target', 'transformError') },
   UnmountOptions: { members: plain('outro') },
   RawSnippet: { members: plain('render', 'setup') },
@@ -322,7 +365,7 @@ export const HAND_SHAPES: Record<string, Shape> = {
   FadeParams: { members: plain('delay', 'duration', 'easing') },
   FlyParams: { members: plain('delay', 'duration', 'easing', 'opacity', 'x', 'y') },
   ScaleParams: { members: plain('delay', 'duration', 'easing', 'opacity', 'start') },
-  SlideParams: { members: plain('axis', 'delay', 'duration', 'easing') },
+  SlideParams: { members: { ...plain('delay', 'duration', 'easing'), axis: values('x', 'y') } },
   FlipParams: { members: plain('delay', 'duration', 'easing') },
   TweenOptions: { members: plain('delay', 'duration', 'easing', 'interpolate') },
   Tween: { members: { ...plain('current', 'target'), set: fn([null, 'TweenOptions']) } },

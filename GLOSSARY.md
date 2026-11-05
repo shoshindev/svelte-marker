@@ -20,6 +20,10 @@ Text that plain JS, HTML or CSS couldn't read, or would read differently, like `
 A name whose spelling Svelte fixes, so renaming it breaks the code, like `load`, `data` in `+page.svelte`, `$lib` and `Snippet`.
 _Avoid_: own name, Svelte-only name, special name
 
+**Fixed value**:
+A string whose text Svelte fixes, like `'auto'` in `prerender = 'auto'` or `hover` in `data-sveltekit-preload-data="hover"`. Its text gets a mark, and its quotes don't.
+_Avoid_: literal, enum value
+
 **Your name**:
 A name whose spelling you choose, like a variable, an import alias or a route parameter, even when it holds a Svelte value.
 _Avoid_: own name

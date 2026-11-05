@@ -59,6 +59,8 @@ import type {
   TweenOptions as SvelteTweenOptions,
 } from 'svelte/motion';
 import type { MediaQuery as SvelteMediaQuery } from 'svelte/reactivity';
+// For the events Svelte names on an element, like onintrostart.
+import type {} from 'svelte/elements';
 import type { fromStore, Readable as SvelteReadable, Writable as SvelteWritable } from 'svelte/store';
 import type {
   BlurParams as SvelteBlurParams,
@@ -169,6 +171,7 @@ export type CloudflareRoutes = NonNullable<AdapterCloudflareOptions['routes']>;
 export type VercelIsr = Extract<AdapterVercelOptions['isr'], object>;
 
 // Svelte.
+export type InspectResult = ReturnType<typeof $inspect>;
 export type MountOptions = SvelteMountOptions;
 export type HydrateOptions = NonNullable<Parameters<typeof hydrate>[1]>;
 export type UnmountOptions = NonNullable<Parameters<typeof unmount>[1]>;

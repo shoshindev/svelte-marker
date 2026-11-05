@@ -105,6 +105,16 @@ export function kindsOf(type: ts.Type): ts.Type[] {
   return [...type.types].sort((a, b) => describe(a).localeCompare(describe(b))).flatMap(kindsOf);
 }
 
+// The strings the values of these types can only be, like 'hover' and 'tap'.
+// Where any string will do, as for an attribute's `name`, none are fixed.
+export function fixedValues(types: readonly ts.Type[]): string[] {
+  const kinds = types.flatMap(kindsOf);
+  const anyString = ts.TypeFlags.String | ts.TypeFlags.TemplateLiteral | ts.TypeFlags.StringMapping;
+  if (kinds.some((kind) => kind.flags & anyString)) return [];
+  const strings = kinds.filter((kind) => kind.isStringLiteral());
+  return [...new Set(strings.map((kind) => (kind as ts.StringLiteralType).value))].sort();
+}
+
 export function isArray(type: ts.Type): boolean {
   return checker.isArrayType(type) || checker.isTupleType(type);
 }
@@ -138,6 +148,9 @@ export const LEFT_OUT: [RegExp, string][] = [
   [/\.platform$/, "the host platform's names, like Cloudflare's env"],
   [/\.(directives|reportOnly)$/, 'CSP directives, named by the web standard'],
   [/^@sveltejs\/adapter-vercel:default\(0\)\.images/, "Vercel's image options"],
+  [/\.methods?$/, 'HTTP methods, like POST'],
+  [/\.aria-[a-z]+$/, 'ARIA attributes, named by the web standard'],
+  [/\.comments\[\]\.type$/, 'the kinds of JS comment, which ESTree names'],
   // Values Svelte gave you that you pass back, rather than write.
   [/^svelte\/store:(get|readonly|fromStore)\(0\)$/, 'a store you pass in'],
   [/^svelte:(mount|hydrate)\(0\)/, 'the component you pass in'],

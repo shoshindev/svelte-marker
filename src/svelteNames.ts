@@ -2,7 +2,7 @@
 // When either one adds something new, this is the file to update.
 
 import { basename } from 'node:path';
-import { fn, plain, type ShapeRef } from './shapes.ts';
+import { fn, plain, type ShapeRef, values } from './shapes.ts';
 
 // Every rune in the Svelte docs. `$inspect(...).with` isn't here because it
 // has a different shape; findMarks.ts handles it separately.
@@ -26,21 +26,26 @@ export const RUNES = new Set([
   '$host',
 ]);
 
-// Import paths that get a mark. This includes older names like $lib and $env/*,
-// because plenty of code still uses them.
-const MARKED_IMPORT =
-  /^(svelte|\$lib|#lib|\$app|\$env|\$service-worker|@sveltejs\/[a-z-]+)(?:\/|$)|\/(\$types)(?:\.d\.ts|\.[jt]s)?$/;
+// Import paths that get a mark. Svelte and SvelteKit fix every part of a path
+// like `$app/forms` or `svelte/transition`, so all of it gets the mark. After
+// `$lib` and `#lib` comes the path to a file of yours, and before `$types` the
+// path to your route, so only those placeholders get one. This includes older
+// names like $lib and $env/*, because plenty of code still uses them.
+const FIXED_IMPORT = /^(?:svelte|\$app|\$env|\$service-worker|@sveltejs\/[a-z-]+)(?:\/.*)?$/;
+const PLACEHOLDER_IMPORT = /^(\$lib|#lib)(?:\/|$)|\/(\$types)(?:\.d\.ts|\.[jt]s)?$/;
 
-// The part of an import path that gets the mark: `$app` in `$app/forms` and
-// `$types` in `./$types`. What follows it is an ordinary path.
+// The part of an import path that gets the mark: all of `$app/forms`, and `$lib`
+// in `$lib/utils`.
 export function markedImportPart(importPath: string): string | undefined {
-  const match = importPath.match(MARKED_IMPORT);
+  if (FIXED_IMPORT.test(importPath)) return importPath;
+  const match = importPath.match(PLACEHOLDER_IMPORT);
   return match?.[1] ?? match?.[2];
 }
 
 // Modules that provide Svelte's or SvelteKit's own functions, values and types.
+// `env` from $env/dynamic/private is SvelteKit's name, though what it holds is yours.
 const OWN_NAMES_IMPORT =
-  /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)|\/\$types(\.d\.ts|\.[jt]s)?$/;
+  /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)|^\$env\/dynamic\/(private|public)$|\/\$types(\.d\.ts|\.[jt]s)?$/;
 
 // $app/env/public and $app/env/private hold your own environment variables.
 const YOUR_VARIABLES_IMPORT = /^\$app\/env\/(private|public)$/;
@@ -52,10 +57,21 @@ export function importsOwnNames(importPath: string): boolean {
   return OWN_NAMES_IMPORT.test(importPath) && !YOUR_VARIABLES_IMPORT.test(importPath);
 }
 
+// Is this name, imported from this path, Svelte's or SvelteKit's? $env/dynamic/private
+// has only `env`, so any other name from there isn't SvelteKit's.
+export function isOwnImportedName(importPath: string, name: string): boolean {
+  if (/^\$env\/dynamic\//.test(importPath)) return name === 'env';
+  return importsOwnNames(importPath);
+}
+
 // What each kind of SvelteKit file can export, and what each export holds. An
 // export only means something special in the right file: `load` in a plain .js
 // file is just a function.
-const PAGE_OPTIONS = plain('config', 'csr', 'entries', 'prerender', 'ssr', 'trailingSlash');
+// The strings a page option can be are SvelteKit's too, like 'auto' in
+// `prerender = 'auto'`. test/svelteNames.test.ts checks them against SvelteKit.
+export const PRERENDER = values('auto');
+export const TRAILING_SLASH = values('always', 'ignore', 'never');
+const PAGE_OPTIONS = { ...plain('config', 'csr', 'entries', 'ssr'), prerender: PRERENDER, trailingSlash: TRAILING_SLASH };
 const PAGE_EXPORTS = { ...PAGE_OPTIONS, load: fn(['LoadEvent']) };
 const SERVER_PAGE_EXPORTS = { ...PAGE_OPTIONS, load: fn(['ServerLoadEvent']) };
 
@@ -66,7 +82,9 @@ const HANDLER = fn(['RequestEvent']);
 const ACTIONS = { members: { default: HANDLER }, anyKey: HANDLER };
 
 const SERVER_EXPORTS = {
-  ...plain('config', 'entries', 'prerender', 'trailingSlash'),
+  ...plain('config', 'entries'),
+  prerender: PRERENDER,
+  trailingSlash: TRAILING_SLASH,
   ...Object.fromEntries(
     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD', 'QUERY', 'fallback'].map((name) => [name, HANDLER]),
   ),
@@ -86,6 +104,29 @@ function hookExports(inBrowser: boolean): Record<string, ShapeRef | null> {
 
 // <script> attributes that plain HTML doesn't have.
 export const SCRIPT_ATTRIBUTES = new Set(['module', 'context', 'generics']);
+
+// Events Svelte fires on an element with a transition, as in onintrostart={go}.
+// The web platform has no events by these names.
+export const TRANSITION_EVENT = /^on(?:intro|outro)(?:start|end)(?:capture)?$/;
+
+// The values SvelteKit reads from its link options, like `hover` in
+// data-sveltekit-preload-data="hover". `older` holds the ones SvelteKit 2 also
+// read, so links written for it keep their marks. test/svelteNames.test.ts checks
+// `values` against SvelteKit's own list.
+export const LINK_OPTIONS: Record<string, { values: string[]; older?: string[] }> = {
+  'preload-code': { values: ['eager', 'false', 'hover', 'tap', 'viewport'], older: ['off'] },
+  'preload-data': { values: ['false', 'hover', 'tap'], older: ['off'] },
+  reload: { values: ['false', 'true'], older: ['off'] },
+  replacestate: { values: ['false', 'true'], older: ['off'] },
+  reset: { values: ['false', 'true'] },
+  keepfocus: { values: [], older: ['false', 'off', 'true'] },
+  noscroll: { values: [], older: ['false', 'off', 'true'] },
+};
+
+export function linkOptionValues(name: string): string[] | undefined {
+  const option = Object.hasOwn(LINK_OPTIONS, name) ? LINK_OPTIONS[name] : undefined;
+  return option && [...option.values, ...(option.older ?? [])];
+}
 
 // The types SvelteKit lets you fill in, inside `namespace App` in src/app.d.ts.
 export const APP_TYPES = ['Error', 'Locals', 'PageData', 'PageState', 'Platform'];

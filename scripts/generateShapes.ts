@@ -10,6 +10,7 @@ import { HAND_MODULE_SHAPES, HAND_SHAPES } from '../src/shapes.ts';
 import {
   checker,
   exportedTypes,
+  fixedValues,
   isArray,
   isLeftOut,
   isObject,
@@ -31,6 +32,7 @@ interface Draft {
   returns: string | null;
   items: string | null;
   anyKey: string | null;
+  values: string[];
 }
 
 // A name like `svelte/compiler.AST.Root` for a type that Svelte's files name,
@@ -70,8 +72,9 @@ export function generateShapes(): string {
     const kinds = [...new Set(types.flatMap(kindsOf))];
     const arrays = kinds.filter(isArray);
     const objects = kinds.filter((type) => !isArray(type) && isObject(type));
-    if (arrays.length + objects.length === 0) return null;
-    const key = [...arrays, ...objects].map(id).sort((a, b) => a - b).join(',');
+    const strings = kinds.filter((type) => type.isStringLiteral());
+    if (arrays.length + objects.length + strings.length === 0) return null;
+    const key = [...arrays, ...objects, ...strings].map(id).sort((a, b) => a - b).join(',');
     if (built.has(key)) {
       const name = built.get(key)!;
       if (forcedName && name) renames.set(name, forcedName);
@@ -83,7 +86,14 @@ export function generateShapes(): string {
     const single = arrays.length === 0 && objects.length === 1 ? objects[0].getSymbol() : undefined;
     const symbol = types.length === 1 ? (types[0].aliasSymbol ?? single) : undefined;
     const name = claimName(forcedName ?? qualifiedName(symbol) ?? position);
-    const draft: Draft = { members: new Map(), args: [], returns: null, items: null, anyKey: null };
+    const draft: Draft = {
+      members: new Map(),
+      args: [],
+      returns: null,
+      items: null,
+      anyKey: null,
+      values: fixedValues(types),
+    };
     drafts.set(name, draft);
     built.set(key, name);
 
@@ -127,12 +137,14 @@ export function generateShapes(): string {
   }
   for (const [name, type] of exportedTypes(ROOT_TYPES_FILE)) build([type], name, name);
 
-  // Keep only the shapes that lead to a name of Svelte's: those with members,
-  // and those that point at one that does. A window's frames point at more
-  // windows, but none of them has a name of Svelte's.
+  // Keep only the shapes that lead to a name or a string of Svelte's: those with
+  // members or values, and those that point at one that does. A window's frames
+  // point at more windows, but none of them has a name of Svelte's.
   const refsOf = (draft: Draft) =>
     [...draft.members.values(), ...draft.args, draft.returns, draft.items, draft.anyKey].filter(Boolean) as string[];
-  const useful = new Set([...drafts].filter(([, draft]) => draft.members.size > 0).map(([name]) => name));
+  const useful = new Set(
+    [...drafts].filter(([, draft]) => draft.members.size > 0 || draft.values.length > 0).map(([name]) => name),
+  );
   for (let grew = true; grew; ) {
     grew = false;
     for (const [name, draft] of drafts) {
@@ -178,7 +190,14 @@ export function generateShapes(): string {
         changed = true;
         continue;
       }
-      const content = JSON.stringify([[...draft.members], draft.args, draft.returns, draft.items, draft.anyKey]);
+      const content = JSON.stringify([
+        [...draft.members],
+        draft.args,
+        draft.returns,
+        draft.items,
+        draft.anyKey,
+        draft.values,
+      ]);
       const same = seen.get(content);
       if (same && !roots.has(name)) {
         drafts.delete(name);
@@ -237,21 +256,41 @@ function wrap(items: string[], indent: string): string {
 }
 
 function render(drafts: Map<string, Draft>, modules: Map<string, Map<string, string>>): string {
-  const shapes = [...drafts].map(([name, draft]) => {
-    const fields: string[] = [];
-    if (draft.members.size > 0) {
-      const members = [...draft.members].map(([member, target]) => `${key(member)}: ${ref(target)}`);
-      fields.push(`    members: {\n${wrap(members, '      ')}\n    },`);
-    }
-    if (draft.args.some(Boolean)) fields.push(`    args: [${draft.args.map(ref).join(', ')}],`);
-    if (draft.returns) fields.push(`    returns: ${ref(draft.returns)},`);
-    if (draft.items) fields.push(`    items: ${ref(draft.items)},`);
-    if (draft.anyKey) fields.push(`    anyKey: ${ref(draft.anyKey)},`);
-    return `  ${quote(name)}: {\n${fields.join('\n')}\n  },`;
-  });
+  // A shape that's only a list of strings is written out where it's used.
+  const isValuesOnly = (draft: Draft) =>
+    draft.values.length > 0 &&
+    draft.members.size === 0 &&
+    !draft.args.some(Boolean) &&
+    !draft.returns &&
+    !draft.items &&
+    !draft.anyKey;
+  const valueList = (draft: Draft) => `[${draft.values.map(quote).join(', ')}]`;
+  const refTo = (target: string | null) => {
+    const draft = target ? drafts.get(target) : undefined;
+    return draft && isValuesOnly(draft) ? `{ values: ${valueList(draft)} }` : ref(target);
+  };
+
+  const shapes = [...drafts]
+    .filter(([, draft]) => !isValuesOnly(draft))
+    .map(([name, draft]) => {
+      const fields: string[] = [];
+      if (draft.members.size > 0) {
+        const members = [...draft.members].map(([member, target]) => `${key(member)}: ${refTo(target)}`);
+        fields.push(`    members: {\n${wrap(members, '      ')}\n    },`);
+      }
+      if (draft.args.some(Boolean)) fields.push(`    args: [${draft.args.map(refTo).join(', ')}],`);
+      if (draft.returns) fields.push(`    returns: ${refTo(draft.returns)},`);
+      if (draft.items) fields.push(`    items: ${refTo(draft.items)},`);
+      if (draft.anyKey) fields.push(`    anyKey: ${refTo(draft.anyKey)},`);
+      if (draft.values.length > 0) {
+        const line = `    values: ${valueList(draft)},`;
+        fields.push(line.length <= 100 ? line : `    values: [\n${wrap(draft.values.map(quote), '      ')}\n    ],`);
+      }
+      return `  ${quote(name)}: {\n${fields.join('\n')}\n  },`;
+    });
   const exports = [...modules].map(
     ([path, entries]) =>
-      `  ${quote(path)}: {\n${[...entries].map(([name, target]) => `    ${key(name)}: ${ref(target)},`).join('\n')}\n  },`,
+      `  ${quote(path)}: {\n${[...entries].map(([name, target]) => `    ${key(name)}: ${refTo(target)},`).join('\n')}\n  },`,
   );
   return `// Generated by \`npm run shapes\` from the types of Svelte, SvelteKit and the
 // official adapters. Don't edit it by hand: run the command again after updating

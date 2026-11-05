@@ -82,8 +82,8 @@ test('marks exactly the expected pieces of the modern sample', () => {
     '}',
 
     // Names that tags create
-    ' item (item.id)',
-    ' item, index (item.id)',
+    ' item',
+    ' item, index',
     ' value',
     ' failure',
     ' failed',
@@ -125,10 +125,16 @@ test('marks exactly the expected pieces of the modern sample', () => {
     '/>',
 
     // SvelteKit imports
-    '$app',
+    '$app/env',
+    '$app/env/private',
+    '$app/env/public',
+    '$app/forms',
+    '$app/navigation',
+    '$app/state',
     '#lib',
     '@sveltejs/kit',
-    '$env',
+    '$env/dynamic/private',
+    '$env/static/public',
     '$lib',
     '$service-worker',
     '$types',
@@ -138,10 +144,14 @@ test('marks exactly the expected pieces of the modern sample', () => {
     'page',
     'browser',
     'error',
+    'env',
     'files',
 
     // Imports from Svelte itself
     'svelte',
+    'svelte/animate',
+    'svelte/store',
+    'svelte/transition',
     'onMount',
     'fade',
     'fly',
@@ -152,8 +162,9 @@ test('marks exactly the expected pieces of the modern sample', () => {
     'url',
     'y',
 
-    // SvelteKit link options
+    // SvelteKit link options, and the values SvelteKit reads from them
     'data-sveltekit-preload-data',
+    'hover',
     'data-sveltekit-reload',
 
     // Everything else that isn't plain JS, HTML or CSS
@@ -235,7 +246,7 @@ test('finds the end of a tag past any > in a value', () => {
   ]);
 });
 
-test('marks only the placeholder in an import path', () => {
+test('marks the part of an import path that Svelte fixes', () => {
   const source = `import '$app/forms';
 import '#lib/a/b.js';
 import './$types.js';
@@ -243,7 +254,14 @@ import 'svelte/store';
 import '@sveltejs/kit/hooks';
 import './other.js';
 import('$lib/c.js');`;
-  assert.deepEqual(markedText(source, 'a.js'), ['$app', '#lib', '$types', 'svelte', '@sveltejs/kit', '$lib']);
+  assert.deepEqual(markedText(source, 'a.js'), [
+    '$app/forms',
+    '#lib',
+    '$types',
+    'svelte/store',
+    '@sveltejs/kit/hooks',
+    '$lib',
+  ]);
   assert.equal(findMarks(source, 'a.js').marks[2].start, source.indexOf('$types'));
 });
 
@@ -285,22 +303,28 @@ test('marks a whole {#snippet} tag, apart from TypeScript', () => {
   assert.deepEqual(markedText(typed), ['{#snippet', ' row', '(run', ', a', ')', '}', '{/snippet}']);
 });
 
-test('marks the names and the key after {#each ... as, but not the list', () => {
+test('marks the names after {#each ... as and the ( ) around the key, but not the list or the key', () => {
   assert.deepEqual(markedText('{#each a as b}x{/each}'), ['{#each', 'as', ' b', '}', '{/each}']);
   assert.deepEqual(markedText('{#each a as b, i (b.id)}x{/each}'), [
     '{#each',
     'as',
-    ' b, i (b.id)',
+    ' b, i',
+    '(',
+    ')',
     '}',
     '{/each}',
   ]);
   assert.deepEqual(markedText('{#each a as { b, c } (b)}{/each}'), [
     '{#each',
     'as',
-    ' { b, c } (b)',
+    ' { b, c }',
+    '(',
+    ')',
     '}',
     '{/each}',
   ]);
+  assert.deepEqual(markedText('{#each a as b ((b.id))}x{/each}'), ['{#each', 'as', ' b', '(', ')', '}', '{/each}']);
+  assertUnmarked('{#each a as b (b.id)}x{/each}', 'b.id');
   assert.deepEqual(markedText('{#each a, i}x{/each}'), ['{#each', ', i', '}', '{/each}']);
   assert.deepEqual(markedText('{#each { length: 3 }, i }x{/each}'), ['{#each', ', i', '}', '{/each}']);
   assert.deepEqual(markedText('{#if (a)}x{/if}'), ['{#if', '}', '{/if}']);
@@ -502,7 +526,7 @@ test('marks hooks and the functions handed to SvelteKit, but not ones only this 
   const source = readProjectFile('samples/src/hooks.server.js');
   assert.deepEqual(
     new Set(markedText(source, 'samples/src/hooks.server.js')),
-    new Set(['sequence', '@sveltejs/kit', 'event', 'resolve', 'handle', 'handleError', 'error', 'message']),
+    new Set(['sequence', '@sveltejs/kit/hooks', 'event', 'resolve', 'handle', 'handleError', 'error', 'message']),
   );
   assertUnmarked(source, 'function log({ event }) { console.log(event); }');
 });
@@ -549,7 +573,7 @@ test('marks the imported name, but not your name for it', () => {
   const source = "import { redirect as go } from '@sveltejs/kit';\ngo(307, '/');";
   assert.deepEqual(markedText(source, 'a.js'), ['redirect', '@sveltejs/kit']);
   const renamed = "import { goto as navigate } from '$app/navigation';\nnavigate('/', { replaceState: true });";
-  assert.deepEqual(markedText(renamed, 'a.js'), ['goto', '$app', 'replaceState']);
+  assert.deepEqual(markedText(renamed, 'a.js'), ['goto', '$app/navigation', 'replaceState']);
   const adapter = "import auto from '@sveltejs/adapter-auto';\nauto();";
   assert.deepEqual(markedText(adapter, 'a.js'), ['@sveltejs/adapter-auto']);
 });
@@ -564,10 +588,10 @@ db.find(getDate(SECRET, KEY, dev));`;
   assert.deepEqual(markedText(source, 'a.js'), [
     '$lib',
     '#lib',
-    '$env',
-    '$app',
+    '$env/static/private',
+    '$app/env/private',
     'dev',
-    '$app',
+    '$app/env',
     'dev',
   ]);
 });
@@ -597,7 +621,7 @@ test('an imported name inside a directive gets one mark', () => {
   import { page } from '$app/state';
 </script>
 <p class:page>Hi</p>`;
-  assert.deepEqual(markedText(source), ['page', '$app', 'class:page']);
+  assert.deepEqual(markedText(source), ['page', '$app/state', 'class:page']);
 });
 
 test('only scans files that can hold Svelte code', () => {
@@ -647,11 +671,17 @@ test('marks component names in both tags, and CSS variables passed to them', () 
   assert.deepEqual(markedText(source), ['<Foo.Bar', '--size', '>', '</Foo.Bar>']);
 });
 
-test('marks await only directly in the markup', () => {
+test('marks await where Svelte waits for it: in the markup, at the top of a component, and in $derived', () => {
   assert.deepEqual(markedText('{await x}'), ['{', 'await', '}']);
   assert.deepEqual(markedText('{#if await x}y{/if}'), ['{#if', 'await', '}', '{/if}']);
   assert.deepEqual(markedText('<p onclick={async () => { await x; }}>Hi</p>'), ['{', '}']);
-  assert.deepEqual(markedText('<script>await x;</script>'), []);
+  assert.deepEqual(markedText('<script>await x;\nif (a) await y;</script>'), ['await', 'await']);
+  assert.deepEqual(markedText('<script>async function a() { await x; }</script>'), []);
+  assert.deepEqual(markedText('<script module>await x;</script>'), ['module']);
+  const derived = '<script>let a = $derived(await x);\nlet b = $derived.by(async () => await y);</script>';
+  assert.deepEqual(markedText(derived), ['$derived', '(', 'await', ')', '$derived.by', '(', ')']);
+  assert.deepEqual(markedText('const a = $derived(await x);\nawait y;', 'a.svelte.ts'), ['$derived', '(', 'await', ')']);
+  assert.deepEqual(markedText('await y;', 'src/lib/uses-kit.ts'), []);
 });
 
 test('marks stores in components, but not in plain JS', () => {
@@ -730,7 +760,7 @@ test('marks :global and -global- in styles, including SCSS', () => {
 test('marks placeholders in SvelteKit templates, and leaves other HTML alone', () => {
   assert.deepEqual(
     markedInSample('samples/src/app.html'),
-    new Set(['%sveltekit.head%', 'data-sveltekit-preload-data', '%sveltekit.body%']),
+    new Set(['%sveltekit.head%', 'data-sveltekit-preload-data', 'hover', '%sveltekit.body%']),
   );
   assert.equal(shouldScan('src/app.html', ''), true);
   assert.equal(shouldScan('src/error.html', ''), true);
@@ -756,11 +786,23 @@ test('marks snapshot in a page component, but not in other components', () => {
   assert.deepEqual(markedText('<script>export const snapshot = {};</script>', 'Other.svelte'), ['export']);
 });
 
-test('marks env placeholders in SvelteKit templates', () => {
+test('marks env placeholders in SvelteKit templates, but not your variable in them', () => {
   const source = '<head>%sveltekit.env.PUBLIC_API_URL% %sveltekit.env.PUBLIC_V2%</head>';
+  assert.deepEqual(markedText(source, 'src/app.html'), ['%sveltekit.env.', '%', '%sveltekit.env.', '%']);
+});
+
+test('marks the values SvelteKit reads from link options in templates', () => {
+  const source = `<body data-sveltekit-preload-data='tap' data-sveltekit-preload-code=eager>
+<a data-sveltekit-reload="off" data-sveltekit-noscroll data-sveltekit-replacestate="maybe">x</a>`;
   assert.deepEqual(markedText(source, 'src/app.html'), [
-    '%sveltekit.env.PUBLIC_API_URL%',
-    '%sveltekit.env.PUBLIC_V2%',
+    'data-sveltekit-preload-data',
+    'tap',
+    'data-sveltekit-preload-code',
+    'eager',
+    'data-sveltekit-reload',
+    'off',
+    'data-sveltekit-noscroll',
+    'data-sveltekit-replacestate',
   ]);
 });
 
@@ -1178,7 +1220,7 @@ test('marks import paths and names in JSDoc and in types', () => {
   const jsdoc = "/** @type {import('./$types').PageLoad} */\nexport function load() {}";
   assert.deepEqual(markedText(jsdoc, 'src/routes/+page.js'), ['$types', 'PageLoad', 'load']);
   assert.deepEqual(markedText("/** @type {import('@sveltejs/kit/hooks').Handle} */", 'a.js'), [
-    '@sveltejs/kit',
+    '@sveltejs/kit/hooks',
     'Handle',
   ]);
   assert.deepEqual(markedText("/** @type {import('$lib/a').B} */", 'a.js'), ['$lib']);
@@ -1211,20 +1253,20 @@ test('marks re-exported names', () => {
   assert.deepEqual(markedText("export { page, navigating as n } from '$app/state';", 'a.ts'), [
     'page',
     'navigating',
-    '$app',
+    '$app/state',
   ]);
   assert.deepEqual(markedText("export { a } from './b';", 'a.ts'), []);
 });
 
 test('marks names from a dynamic import', () => {
   const named = "const { goto } = await import('$app/navigation');\ngoto('/');";
-  assert.deepEqual(markedText(named, 'a.ts'), ['goto', '$app', 'goto']);
+  assert.deepEqual(markedText(named, 'a.ts'), ['goto', '$app/navigation', 'goto']);
   const inFunction = "async function a() {\n  const { goto } = await import('$app/navigation');\n  goto('/');\n}";
-  assert.deepEqual(markedText(inFunction, 'a.ts'), ['goto', '$app', 'goto']);
+  assert.deepEqual(markedText(inFunction, 'a.ts'), ['goto', '$app/navigation', 'goto']);
   const whole = "const kit = await import('@sveltejs/kit');\nkit.error(404);";
   assert.deepEqual(markedText(whole, 'a.ts'), ['@sveltejs/kit', 'error']);
   assert.deepEqual(markedText("import('svelte/store').then(({ get }) => get(a));", 'a.ts'), [
-    'svelte',
+    'svelte/store',
     'get',
     'get',
   ]);
@@ -1394,7 +1436,7 @@ test('marks the names SvelteKit fixes on its values, but not the web platform or
   assert.deepEqual(markedText(state), [
     'page',
     'navigating',
-    '$app',
+    '$app/state',
     '{',
     'page',
     'url',
@@ -1410,7 +1452,7 @@ test('marks the names SvelteKit fixes on its values, but not the web platform or
     '}',
   ]);
   const store = "<script>\n  import { page } from '$app/stores';\n</script>\n{$page.url.pathname}";
-  assert.deepEqual(markedText(store), ['page', '$app', '{', '$page', 'url', '}']);
+  assert.deepEqual(markedText(store), ['page', '$app/stores', '{', '$page', 'url', '}']);
 });
 
 test('follows a Svelte value through destructuring and copies', () => {
@@ -1457,7 +1499,7 @@ test('marks what Svelte passes to the functions you give it', () => {
   assert.deepEqual(markedText(navigation), [
     'beforeNavigate',
     'onNavigate',
-    '$app',
+    '$app/navigation',
     'beforeNavigate',
     'to',
     'cancel',
@@ -1480,13 +1522,14 @@ test('marks what Svelte passes to the functions you give it', () => {
 <form method="POST" use:enhance={submit}></form>`;
   assert.deepEqual(markedText(form, 'src/routes/+page.svelte'), [
     'enhance',
-    '$app',
+    '$app/forms',
     'formData',
     'cancel',
     'result',
     'update',
     'result',
     'type',
+    'success',
     'update',
     'reset',
     'use:enhance',
@@ -1542,7 +1585,7 @@ test('marks the names crossfade passes on', () => {
 </script>
 <p in:receive={{ key: 1 }} out:send={{ key: 1 }}>x</p>`;
   const marked = markedText(source);
-  assert.deepEqual(marked.slice(marked.indexOf('svelte') + 1), [
+  assert.deepEqual(marked.slice(marked.indexOf('svelte/transition') + 1), [
     'crossfade',
     'duration',
     'fallback',
@@ -1599,7 +1642,7 @@ import adapter from '@sveltejs/adapter-node';
 export default { plugins: [sveltekit({ adapter: adapter({ out: 'build' }), paths: { base: '/app' } })] };`;
   assert.deepEqual(markedText(vite, 'vite.config.js'), [
     'sveltekit',
-    '@sveltejs/kit',
+    '@sveltejs/kit/vite',
     '@sveltejs/adapter-node',
     'sveltekit',
     'adapter',
@@ -1671,11 +1714,11 @@ test('marks what remote functions imported from a .remote file hold', () => {
 
 test('marks the names on values Svelte returns', () => {
   const window = "<script>\n  import { innerWidth } from 'svelte/reactivity/window';\n</script>\n{innerWidth.current}";
-  assert.deepEqual(markedText(window), ['innerWidth', 'svelte', '{', 'innerWidth', 'current', '}']);
+  assert.deepEqual(markedText(window), ['innerWidth', 'svelte/reactivity/window', '{', 'innerWidth', 'current', '}']);
   const forms = "import { deserialize } from '$app/forms';\nconst result = deserialize(text);\nresult.type;";
-  assert.deepEqual(markedText(forms, 'a.js'), ['deserialize', '$app', 'deserialize', 'type']);
+  assert.deepEqual(markedText(forms, 'a.js'), ['deserialize', '$app/forms', 'deserialize', 'type']);
   const transition = "import { fade } from 'svelte/transition';\nconst config = fade(node, {});\nconfig.duration;";
-  assert.deepEqual(markedText(transition, 'a.js'), ['fade', 'svelte', 'fade', 'duration']);
+  assert.deepEqual(markedText(transition, 'a.js'), ['fade', 'svelte/transition', 'fade', 'duration']);
   const component = "import App from './App.svelte';\nconst app = new App({ target: document.body });\napp.$set({});";
   assert.deepEqual(markedText(component, 'src/main.js'), ['target', '$set']);
 });
@@ -1688,7 +1731,7 @@ compile(source, { generate: 'server' }).js.code;`;
   assert.deepEqual(markedText(compiler, 'build.js'), [
     'parse',
     'compile',
-    'svelte',
+    'svelte/compiler',
     'parse',
     'modern',
     'fragment',
@@ -1696,6 +1739,7 @@ compile(source, { generate: 'server' }).js.code;`;
     'type',
     'compile',
     'generate',
+    'server',
     'js',
     'code',
   ]);
@@ -1705,7 +1749,7 @@ compile(source, { generate: 'server' }).js.code;`;
 sveltekit({ adapter: { name: 'mine', adapt(builder) { builder.log.minor('hi'); } } });`;
   assert.deepEqual(markedText(adapter, 'vite.config.js'), [
     'sveltekit',
-    '@sveltejs/kit',
+    '@sveltejs/kit/vite',
     'sveltekit',
     'adapter',
     'name',
@@ -1733,5 +1777,127 @@ test('follows the items of a list Svelte gives you', () => {
     'cookies',
     'getAll',
     'name',
+  ]);
+});
+
+test("marks Svelte's transition events on elements, but not props of a component", () => {
+  const source = '<div transition:fade onintrostart={a} onoutroendcapture={b} onclick={c}>x</div><Card onintrostart={a} />';
+  assert.deepEqual(markedText(source), [
+    'transition:fade',
+    'onintrostart',
+    '{',
+    '}',
+    'onoutroendcapture',
+    '{',
+    '}',
+    '{',
+    '}',
+    '<Card',
+    '{',
+    '}',
+    '/>',
+  ]);
+});
+
+test('marks the comma between the getter and the setter of a binding', () => {
+  const source = '<input bind:value={() => a, /* , */ (v) => (a = v)} />';
+  assert.deepEqual(markedText(source), ['bind:value', '{', ',', '}']);
+  assert.equal(findMarks(source).marks[2].start, source.indexOf(', /*'));
+  assert.deepEqual(markedText('<p title={(a, b)}>x</p>'), ['{', '}']);
+});
+
+test('marks env from $env/dynamic, but not the variables in it', () => {
+  const source = `import { env } from '$env/dynamic/private';
+env.SECRET;
+export { env as e } from '$env/dynamic/public';`;
+  assert.deepEqual(markedText(source, 'a.ts'), ['env', '$env/dynamic/private', 'env', 'env', '$env/dynamic/public']);
+  const wrong = "import { SECRET } from '$env/dynamic/private';\nSECRET;";
+  assert.deepEqual(markedText(wrong, 'a.ts'), ['$env/dynamic/private']);
+});
+
+// The marked text in a source, keeping only the strings in `words`.
+function markedWords(source: string, filePath: string, words: string[]): string[] {
+  return markedText(source, filePath).filter((text) => words.includes(text));
+}
+
+test('marks the strings Svelte fixes, but not their quotes, and not strings of yours', () => {
+  const options = "export const prerender = 'auto';\nexport const trailingSlash = `always`;\nexport const ssr = 'auto';";
+  assert.deepEqual(markedText(options, 'src/routes/+page.ts'), ['prerender', 'auto', 'trailingSlash', 'always', 'ssr']);
+  assert.deepEqual(markedText("export const prerender = 'auto' as const;", 'src/routes/api/+server.ts'), [
+    'prerender',
+    'auto',
+  ]);
+
+  const form = `<script>
+  import { enhance } from '$app/forms';
+  const submit = () => async ({ result }) => {
+    if (result.type === 'failure' || 'redirect' == result.type) return;
+    switch (result.type) { case 'success': break; case 'mine': break; }
+    if (result.status === 'success' || other === 'error') return;
+  };
+</script>
+<form use:enhance={submit}></form>`;
+  const results = ['failure', 'redirect', 'success', 'mine', 'error'];
+  assert.deepEqual(markedWords(form, 'src/routes/+page.svelte', results), ['failure', 'redirect', 'success']);
+
+  const navigation = `<script>
+  import { beforeNavigate } from '$app/navigation';
+  beforeNavigate(({ type }) => { if (type === 'leave' || type === \`link\`) return; });
+</script>`;
+  assert.deepEqual(markedWords(navigation, 'Nav.svelte', ['leave', 'link']), ['leave', 'link']);
+
+  const hook = "export const handle = ({ event, resolve }) => resolve(event, { preload: ({ type }) => type === 'font' });";
+  assert.deepEqual(markedWords(hook, 'src/hooks.server.ts', ['font']), ['font']);
+
+  const inspect = "<script>$inspect(count).with((kind) => { if (kind === 'update') debugger; });</script>";
+  assert.deepEqual(markedWords(inspect, 'A.svelte', ['update', 'with']), ['with', 'update']);
+
+  const slide = "<script>import { slide } from 'svelte/transition';</script><p transition:slide={{ axis: 'x' }}>x</p>";
+  assert.deepEqual(markedWords(slide, 'A.svelte', ['axis', 'x']), ['axis', 'x']);
+
+  assert.deepEqual(markedText("const a = 'auto';\nif (a === 'auto') {}", 'src/lib/uses-kit.ts'), []);
+});
+
+test('marks the strings in Svelte and SvelteKit options', () => {
+  const vite = `import { sveltekit } from '@sveltejs/kit/vite';
+sveltekit({
+  router: { type: 'hash' },
+  output: { bundleStrategy: 'single' },
+  prerender: { handleHttpError: 'warn' },
+  compilerOptions: { css: ({ filename }) => (filename.endsWith('.x.svelte') ? 'external' : 'injected') },
+  alias: { mine: 'hash' },
+});`;
+  const words = ['hash', 'single', 'warn', 'external', 'injected', '.x.svelte'];
+  assert.deepEqual(markedWords(vite, 'vite.config.js', words), ['hash', 'single', 'warn', 'external', 'injected']);
+  const compile = "import { compile } from 'svelte/compiler';\ncompile(source, { generate: 'server', css: `injected` });";
+  assert.deepEqual(markedWords(compile, 'build.js', ['server', 'injected']), ['server', 'injected']);
+});
+
+test('marks the values in <svelte:options> and in SvelteKit link options', () => {
+  const options = `<svelte:options namespace="svg" css="injected" customElement={{ tag: 'my-el', shadow: 'none', props: { open: { type: 'Boolean', reflect: true } } }} />`;
+  assert.deepEqual(markedText(options), [
+    '<svelte:options',
+    'namespace',
+    'svg',
+    'css',
+    'injected',
+    'customElement',
+    '{',
+    'tag',
+    'shadow',
+    'none',
+    'props',
+    'type',
+    'Boolean',
+    'reflect',
+    '}',
+    '/>',
+  ]);
+  const links = '<a data-sveltekit-preload-data="hover" data-sveltekit-reload="maybe" data-sveltekit-noscroll>x</a>';
+  assert.deepEqual(markedText(links), [
+    'data-sveltekit-preload-data',
+    'hover',
+    'data-sveltekit-reload',
+    'data-sveltekit-noscroll',
   ]);
 });

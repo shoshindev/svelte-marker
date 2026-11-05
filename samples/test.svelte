@@ -28,7 +28,7 @@
 
   // SvelteKit imports: older names you'll still meet
   import { PUBLIC_API } from '$env/static/public';
-  import { API_KEY } from '$env/dynamic/private';
+  import { env } from '$env/dynamic/private';
   import Card from '$lib/Card.svelte';
   import { files } from '$service-worker';
 
@@ -42,8 +42,9 @@
   import { flip } from 'svelte/animate';
   import { writable } from 'svelte/store';
 
-  // Your own files stay unmarked. Names from $lib, #lib and $env stay unmarked
-  // too, because those are your code. Only the paths above get a mark.
+  // Your own files stay unmarked. Names from $lib and #lib, and the variables in
+  // $env, stay unmarked too, because those are yours. Only the paths above, and
+  // SvelteKit's own names like `env`, get a mark.
   import './local.css';
 
   // Runes
