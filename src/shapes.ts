@@ -167,16 +167,23 @@ export const HAND_SHAPES: Record<string, Shape> = {
   PageChunk: { members: plain('done', 'html') },
   PreloadInput: { members: { ...plain('filename', 'path'), type: values('asset', 'css', 'font', 'js') } },
   HandleFetchInput: { members: { ...plain('fetch', 'request'), event: 'RequestEvent' } },
+  // `remote` names the remote function whose arguments failed validation. Only the
+  // server sees those, so in the browser it's always undefined.
   ServerErrorInput: {
     members: {
       ...plain('error', 'issues'),
       event: 'RequestEvent',
       kind: values('app', 'framework', 'unknown', 'validation'),
+      remote: { members: plain('file', 'name') },
     },
     older: ['message', 'status'],
   },
   ClientErrorInput: {
-    members: { ...plain('error', 'issues'), event: 'NavigationEvent', kind: values('app', 'framework', 'unknown') },
+    members: {
+      ...plain('error', 'issues', 'remote'),
+      event: 'NavigationEvent',
+      kind: values('app', 'framework', 'unknown'),
+    },
     older: ['message', 'status'],
   },
   RerouteInput: { members: plain('fetch', 'url') },

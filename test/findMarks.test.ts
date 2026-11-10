@@ -1675,6 +1675,21 @@ test('marks the names in what you hand back to SvelteKit', () => {
   assert.deepEqual(markedText(thrown, 'a.ts'), ['error', '@sveltejs/kit', 'error', 'message']);
 });
 
+test('marks the remote function that failed validation in handleError', () => {
+  const hook = "export function handleError({ kind, remote }) {\n  if (kind === 'validation') log(remote?.name, remote.file);\n}";
+  assert.deepEqual(markedText(hook, 'src/hooks.server.ts'), [
+    'handleError',
+    'kind',
+    'remote',
+    'kind',
+    'validation',
+    'remote',
+    'name',
+    'remote',
+    'file',
+  ]);
+});
+
 test('marks the methods of a store, and Svelte values in {@const}', () => {
   const source = `<script>
   import { writable } from 'svelte/store';
