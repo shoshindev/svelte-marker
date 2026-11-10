@@ -6,21 +6,27 @@ The rule: text gets a mark if plain JS, HTML or CSS couldn't read it or would re
 
 It only adds a background, so your theme's text colors stay the same and it works with any color theme.
 
+![A SvelteKit page on the Dark Modern theme, with violet marks behind the Svelte syntax and names](images/screenshot-dark.png)
+
+![The same page on the Light Modern theme](images/screenshot-light.png)
+
 ## Install
 
-You need VS Code 1.100 or newer. Download `svelte-marker-0.0.8.vsix`, then run:
+You need VS Code 1.100 or newer. Search for **Svelte Marker** in the Extensions view and click **Install**, or run:
 
 ```bash
-code --install-extension svelte-marker-0.0.8.vsix
+code --install-extension shoshindev.svelte-marker
 ```
 
-Or open the Extensions view in VS Code, click the **...** menu at the top, and choose **Install from VSIX**.
-
 [Svelte for VS Code](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) installs along with it if you don't have it yet. It's what tells VS Code that a `.svelte` file is Svelte, so Svelte Marker can't run without it.
+
+To install a build of this repository instead, see [Package](CONTRIBUTING.md#package) in CONTRIBUTING.
 
 ## Use
 
 Marks appear on their own when you open a Svelte file. Turn them on and off with **Svelte Marker: Toggle Marks** in the Command Palette. The setting survives restarts.
+
+Marks also appear in Restricted Mode, which VS Code uses for folders you haven't marked as trusted, because the extension only reads your files and never runs code from them.
 
 ## What gets marked
 

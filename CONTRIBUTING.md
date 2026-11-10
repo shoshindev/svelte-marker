@@ -40,9 +40,19 @@ It prints every distinct piece of text that got a mark, then the lines that look
 npm run vsix
 ```
 
-This creates `svelte-marker-0.0.8.vsix`. It also rewrites `THIRD-PARTY-NOTICES.md`, so commit that file if it changes.
+This creates `svelte-marker-0.0.9.vsix`. It also rewrites `THIRD-PARTY-NOTICES.md`, so commit that file if it changes. To install it in VS Code, run:
+
+```bash
+code --install-extension svelte-marker-0.0.9.vsix
+```
+
+Or open the Extensions view, click the **...** menu at the top, and choose **Install from VSIX**.
+
+For a release, raise `version` in `package.json` and add a section for it at the top of `CHANGELOG.md`. The Marketplace shows that file in the extension's Changelog tab.
 
 `images/icon.png` is a 256px render of `images/icon.svg`. Marketplace icons can't be SVG, so export it again after changing the SVG.
+
+`images/screenshot-dark.png` and `images/screenshot-light.png` are the README's screenshots, taken in VS Code on the Dark Modern and Light Modern themes. Take them again when a change to the marks would show in them. `.vscodeignore` keeps them out of the `.vsix`, and the Marketplace loads them from GitHub instead, so push them before publishing.
 
 ## Updating Svelte
 

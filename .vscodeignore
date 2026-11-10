@@ -16,3 +16,4 @@ GLOSSARY.md
 docs/**
 .npmrc
 scripts/**
+images/screenshot-*.png
