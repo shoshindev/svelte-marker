@@ -8,10 +8,10 @@ It only adds a background, so your theme's text colors stay the same and it work
 
 ## Install
 
-You need VS Code 1.100 or newer. Download `svelte-marker-0.0.7.vsix`, then run:
+You need VS Code 1.100 or newer. Download `svelte-marker-0.0.8.vsix`, then run:
 
 ```bash
-code --install-extension svelte-marker-0.0.7.vsix
+code --install-extension svelte-marker-0.0.8.vsix
 ```
 
 Or open the Extensions view in VS Code, click the **...** menu at the top, and choose **Install from VSIX**.

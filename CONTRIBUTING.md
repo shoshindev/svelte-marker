@@ -40,7 +40,7 @@ It prints every distinct piece of text that got a mark, then the lines that look
 npm run vsix
 ```
 
-This creates `svelte-marker-0.0.7.vsix`. It also rewrites `THIRD-PARTY-NOTICES.md`, so commit that file if it changes.
+This creates `svelte-marker-0.0.8.vsix`. It also rewrites `THIRD-PARTY-NOTICES.md`, so commit that file if it changes.
 
 `images/icon.png` is a 256px render of `images/icon.svg`. Marketplace icons can't be SVG, so export it again after changing the SVG.
 
