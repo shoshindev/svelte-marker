@@ -105,12 +105,17 @@ export function kindsOf(type: ts.Type): ts.Type[] {
   return [...type.types].sort((a, b) => describe(a).localeCompare(describe(b))).flatMap(kindsOf);
 }
 
+// Can one of these kinds be any string at all, as an attribute's `name` can?
+// Then none of the strings at that place are fixed.
+export function allowsAnyString(kinds: readonly ts.Type[]): boolean {
+  const anyString = ts.TypeFlags.String | ts.TypeFlags.TemplateLiteral | ts.TypeFlags.StringMapping;
+  return kinds.some((kind) => Boolean(kind.flags & anyString));
+}
+
 // The strings the values of these types can only be, like 'hover' and 'tap'.
-// Where any string will do, as for an attribute's `name`, none are fixed.
 export function fixedValues(types: readonly ts.Type[]): string[] {
   const kinds = types.flatMap(kindsOf);
-  const anyString = ts.TypeFlags.String | ts.TypeFlags.TemplateLiteral | ts.TypeFlags.StringMapping;
-  if (kinds.some((kind) => kind.flags & anyString)) return [];
+  if (allowsAnyString(kinds)) return [];
   const strings = kinds.filter((kind) => kind.isStringLiteral());
   return [...new Set(strings.map((kind) => (kind as ts.StringLiteralType).value))].sort();
 }

@@ -2,7 +2,7 @@
 // When either one adds something new, this is the file to update.
 
 import { basename } from 'node:path';
-import { fn, plain, type ShapeRef, values } from './shapes.ts';
+import { fn, hasMember, MODULE_SHAPES, plain, type Shape, type ShapeRef, values } from './shapes.ts';
 
 // Every rune in the Svelte docs. `$inspect(...).with` isn't here because it
 // has a different shape; findMarks.ts handles it separately.
@@ -42,26 +42,34 @@ export function markedImportPart(importPath: string): string | undefined {
   return match?.[1] ?? match?.[2];
 }
 
-// Modules that provide Svelte's or SvelteKit's own functions, values and types.
-// `env` from $env/dynamic/private is SvelteKit's name, though what it holds is yours.
-const OWN_NAMES_IMPORT =
-  /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)|^\$env\/dynamic\/(private|public)$|\/\$types(\.d\.ts|\.[jt]s)?$/;
+// Modules whose exports are all Svelte's or SvelteKit's own functions, values
+// and types.
+const OWN_NAMES_IMPORT = /^(svelte|\$app|\$service-worker|@sveltejs\/[a-z-]+)(\/|$)|\/\$types(\.d\.ts|\.[jt]s)?$/;
 
 // $app/env/public and $app/env/private hold your own environment variables.
 const YOUR_VARIABLES_IMPORT = /^\$app\/env\/(private|public)$/;
 
-// Does importing from this path bring in Svelte's or SvelteKit's own names?
-// If so, those names get marked wherever they're used. The other marked paths,
-// like $lib, point at your own code, so their names stay unmarked.
-export function importsOwnNames(importPath: string): boolean {
-  return OWN_NAMES_IMPORT.test(importPath) && !YOUR_VARIABLES_IMPORT.test(importPath);
+// Modules with one name of SvelteKit's among names of yours. `env` from
+// $env/dynamic/private is SvelteKit's, though the variables it holds are yours.
+const ENV_MODULE: Shape = { members: plain('env') };
+const PARTLY_OWN_MODULES: Record<string, Shape> = {
+  '$env/dynamic/private': ENV_MODULE,
+  '$env/dynamic/public': ENV_MODULE,
+};
+
+// What a whole module holds, as `import * as kit` and `await import()` give it,
+// or null when its names are yours, as with $lib. Every kind of import asks this
+// one question, so they all agree on which names are Svelte's.
+export function moduleShape(importPath: string): Shape | null {
+  if (Object.hasOwn(PARTLY_OWN_MODULES, importPath)) return PARTLY_OWN_MODULES[importPath];
+  if (!OWN_NAMES_IMPORT.test(importPath) || YOUR_VARIABLES_IMPORT.test(importPath)) return null;
+  return { anyMember: true, members: MODULE_SHAPES[importPath] };
 }
 
-// Is this name, imported from this path, Svelte's or SvelteKit's? $env/dynamic/private
-// has only `env`, so any other name from there isn't SvelteKit's.
+// Is this name, imported from this path, Svelte's or SvelteKit's? If so, it gets
+// marked wherever it's used.
 export function isOwnImportedName(importPath: string, name: string): boolean {
-  if (/^\$env\/dynamic\//.test(importPath)) return name === 'env';
-  return importsOwnNames(importPath);
+  return hasMember(moduleShape(importPath), name);
 }
 
 // What each kind of SvelteKit file can export, and what each export holds. An
@@ -110,22 +118,21 @@ export const SCRIPT_ATTRIBUTES = new Set(['module', 'context', 'generics']);
 export const TRANSITION_EVENT = /^on(?:intro|outro)(?:start|end)(?:capture)?$/;
 
 // The values SvelteKit reads from its link options, like `hover` in
-// data-sveltekit-preload-data="hover". `older` holds the ones SvelteKit 2 also
-// read, so links written for it keep their marks. test/svelteNames.test.ts checks
-// `values` against SvelteKit's own list.
-export const LINK_OPTIONS: Record<string, { values: string[]; older?: string[] }> = {
-  'preload-code': { values: ['eager', 'false', 'hover', 'tap', 'viewport'], older: ['off'] },
-  'preload-data': { values: ['false', 'hover', 'tap'], older: ['off'] },
-  reload: { values: ['false', 'true'], older: ['off'] },
-  replacestate: { values: ['false', 'true'], older: ['off'] },
+// data-sveltekit-preload-data="hover". `olderValues` holds the ones SvelteKit 2
+// also read, so links written for it keep their marks. test/svelteNames.test.ts
+// checks `values` against SvelteKit's own list.
+export const LINK_OPTIONS: Record<string, Shape> = {
+  'preload-code': { values: ['eager', 'false', 'hover', 'tap', 'viewport'], olderValues: ['off'] },
+  'preload-data': { values: ['false', 'hover', 'tap'], olderValues: ['off'] },
+  reload: { values: ['false', 'true'], olderValues: ['off'] },
+  replacestate: { values: ['false', 'true'], olderValues: ['off'] },
   reset: { values: ['false', 'true'] },
-  keepfocus: { values: [], older: ['false', 'off', 'true'] },
-  noscroll: { values: [], older: ['false', 'off', 'true'] },
+  keepfocus: { values: [], olderValues: ['false', 'off', 'true'] },
+  noscroll: { values: [], olderValues: ['false', 'off', 'true'] },
 };
 
-export function linkOptionValues(name: string): string[] | undefined {
-  const option = Object.hasOwn(LINK_OPTIONS, name) ? LINK_OPTIONS[name] : undefined;
-  return option && [...option.values, ...(option.older ?? [])];
+export function linkOption(name: string): Shape | undefined {
+  return Object.hasOwn(LINK_OPTIONS, name) ? LINK_OPTIONS[name] : undefined;
 }
 
 // The types SvelteKit lets you fill in, inside `namespace App` in src/app.d.ts.

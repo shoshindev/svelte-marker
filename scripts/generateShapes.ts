@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { HAND_MODULE_SHAPES, HAND_SHAPES } from '../src/shapes.ts';
 import {
+  allowsAnyString,
   checker,
   exportedTypes,
   fixedValues,
@@ -72,7 +73,9 @@ export function generateShapes(): string {
     const kinds = [...new Set(types.flatMap(kindsOf))];
     const arrays = kinds.filter(isArray);
     const objects = kinds.filter((type) => !isArray(type) && isObject(type));
-    const strings = kinds.filter((type) => type.isStringLiteral());
+    // Where any string will do, none are fixed, so the literals there don't tell
+    // this place apart from one without them.
+    const strings = allowsAnyString(kinds) ? [] : kinds.filter((type) => type.isStringLiteral());
     if (arrays.length + objects.length + strings.length === 0) return null;
     const key = [...arrays, ...objects, ...strings].map(id).sort((a, b) => a - b).join(',');
     if (built.has(key)) {

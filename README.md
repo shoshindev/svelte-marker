@@ -60,7 +60,7 @@ Some names stay unmarked on purpose. Names from `$lib` and `#lib` are your own c
 
 Runes are marked in `.svelte` files and in modules with `.svelte` in their name, like `.svelte.ts` and `.svelte.test.ts`, because `$state()` is an ordinary function call anywhere else.
 
-SvelteKit's `hooks`, `params` and `env` files are found by their path, so they only count when the nearest `package.json` lists `@sveltejs/kit`, or when there's no `package.json` above the file at all. In a package that doesn't list it, `src/hooks.ts` is an ordinary file.
+SvelteKit's `hooks`, `params` and `env` files are found by their path, so they only count when the nearest `package.json` lists `@sveltejs/kit`, or when there's no `package.json` above the file at all. In a package that doesn't list it, `src/hooks.ts` is an ordinary file. The same goes for what only SvelteKit reads in a component: `?/` in a form action, `data-sveltekit-` link options, `App.Locals` and imports from `.remote.ts` files.
 
 ## Color
 

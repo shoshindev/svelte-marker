@@ -33,6 +33,9 @@ export interface Shape {
   // The strings it can be, whose text Svelte fixes, like 'success' for the
   // `type` of a form result.
   values?: string[];
+  // Strings from older versions that the current ones no longer allow, like
+  // 'off' for a link option, which SvelteKit 2 read.
+  olderValues?: string[];
 }
 
 // A function with these arguments, and what it returns.
@@ -43,6 +46,21 @@ export function fn(args: (ShapeRef | null)[], returns?: ShapeRef): Shape {
 // A string that can only be one of these.
 export function values(...items: string[]): Shape {
   return { values: items };
+}
+
+export function resolveShape(ref: ShapeRef | null | undefined): Shape | null {
+  return typeof ref === 'string' ? (SHAPES[ref] ?? null) : (ref ?? null);
+}
+
+// Is this one of the names Svelte fixes on a value of this shape?
+export function hasMember(shape: Shape | null | undefined, name: string | undefined): boolean {
+  if (!shape || name === undefined) return false;
+  return Boolean(shape.anyMember) || Object.hasOwn(shape.members ?? {}, name) || Boolean(shape.older?.includes(name));
+}
+
+// Is this one of the strings Svelte fixes for a value of this shape?
+export function hasValue(shape: Shape | null | undefined, text: string): boolean {
+  return Boolean(shape?.values?.includes(text) || shape?.olderValues?.includes(text));
 }
 
 // What <svelte:options> takes, in the syntax tree that parse() returns.
@@ -345,7 +363,7 @@ export const HAND_SHAPES: Record<string, Shape> = {
 
   // Svelte.
   InspectResult: { members: { with: fn([fn([values('init', 'update')])]) } },
-  MountOptions:{ members: plain('anchor', 'context', 'events', 'intro', 'props', 'target', 'transformError') },
+  MountOptions: { members: plain('anchor', 'context', 'events', 'intro', 'props', 'target', 'transformError') },
   HydrateOptions: { members: plain('context', 'events', 'intro', 'props', 'recover', 'target', 'transformError') },
   UnmountOptions: { members: plain('outro') },
   RawSnippet: { members: plain('render', 'setup') },

@@ -1256,6 +1256,7 @@ test('marks re-exported names', () => {
     '$app/state',
   ]);
   assert.deepEqual(markedText("export { a } from './b';", 'a.ts'), []);
+  assert.deepEqual(markedText('function goto() {}\nexport { goto };', 'a.ts'), []);
 });
 
 test('marks names from a dynamic import', () => {
@@ -1813,6 +1814,20 @@ export { env as e } from '$env/dynamic/public';`;
   assert.deepEqual(markedText(source, 'a.ts'), ['env', '$env/dynamic/private', 'env', 'env', '$env/dynamic/public']);
   const wrong = "import { SECRET } from '$env/dynamic/private';\nSECRET;";
   assert.deepEqual(markedText(wrong, 'a.ts'), ['$env/dynamic/private']);
+  // The same through every other way of importing.
+  const whole = "import * as dyn from '$env/dynamic/private';\ndyn.env.SECRET;\ndyn.SECRET;";
+  assert.deepEqual(markedText(whole, 'a.ts'), ['$env/dynamic/private', 'env']);
+  const dynamic = "const { env, SECRET } = await import('$env/dynamic/private');\nenv.SECRET;\nSECRET;";
+  assert.deepEqual(markedText(dynamic, 'a.ts'), ['env', '$env/dynamic/private', 'env']);
+  const types = `/** @type {typeof import('$env/dynamic/private').SECRET} */
+let a: typeof import('$env/dynamic/private').env;
+let b: typeof import('$env/dynamic/private').SECRET;`;
+  assert.deepEqual(markedText(types, 'a.ts'), [
+    '$env/dynamic/private',
+    '$env/dynamic/private',
+    'env',
+    '$env/dynamic/private',
+  ]);
 });
 
 // The marked text in a source, keeping only the strings in `words`.
@@ -1893,11 +1908,14 @@ test('marks the values in <svelte:options> and in SvelteKit link options', () =>
     '}',
     '/>',
   ]);
-  const links = '<a data-sveltekit-preload-data="hover" data-sveltekit-reload="maybe" data-sveltekit-noscroll>x</a>';
+  const links = '<a data-sveltekit-preload-data="hover" data-sveltekit-reload="maybe" data-sveltekit-noscroll="off">x</a>';
   assert.deepEqual(markedText(links), [
     'data-sveltekit-preload-data',
     'hover',
     'data-sveltekit-reload',
     'data-sveltekit-noscroll',
+    'off',
   ]);
+  // Only SvelteKit reads link options, as with `?/` in a form action.
+  assert.deepEqual(findMarks(links, 'Component.svelte', false).marks, []);
 });

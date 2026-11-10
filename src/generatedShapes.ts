@@ -937,11 +937,11 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       onwarn: '@sveltejs/vite-plugin-svelte:loadSvelteConfig(1).onwarn', outDir: null,
       output: '@sveltejs/kit.RecursiveRequired#14', paths: '@sveltejs/kit.RecursiveRequired#15',
       prebundleSvelteLibraries: null, preprocess: 'Preprocessors',
-      prerender: '@sveltejs/kit.RecursiveRequired#16', router: '@sveltejs/kit.RecursiveRequired#18',
+      prerender: '@sveltejs/kit.RecursiveRequired#16', router: '@sveltejs/kit.RecursiveRequired#17',
       serviceWorker: 'Adapter.adapt(0).config.serviceWorker',
-      tracing: '@sveltejs/kit.RecursiveRequired#20',
+      tracing: '@sveltejs/kit.RecursiveRequired#19',
       typescript: 'Adapter.adapt(0).config.typescript',
-      version: '@sveltejs/kit.RecursiveRequired#21',
+      version: '@sveltejs/kit.RecursiveRequired#20',
     },
   },
   'Adapter.adapt(0).config.adapter.emulate': {
@@ -1090,7 +1090,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       message: null, routes: null,
     },
   },
-  '@sveltejs/kit.RecursiveRequired#18': {
+  '@sveltejs/kit.RecursiveRequired#17': {
     members: {
       resolution: { values: ['client', 'server'] }, type: { values: ['hash', 'pathname'] },
     },
@@ -1100,7 +1100,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       options: null, register: null,
     },
   },
-  '@sveltejs/kit.RecursiveRequired#20': {
+  '@sveltejs/kit.RecursiveRequired#19': {
     members: {
       server: null,
     },
@@ -1110,7 +1110,7 @@ export const GENERATED_SHAPES: Record<string, Shape> = {
       config: null,
     },
   },
-  '@sveltejs/kit.RecursiveRequired#21': {
+  '@sveltejs/kit.RecursiveRequired#20': {
     members: {
       name: null, pollInterval: null,
     },

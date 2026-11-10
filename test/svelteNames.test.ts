@@ -2,14 +2,16 @@
 // that Svelte, SvelteKit and the official adapters publish. An update that adds,
 // renames or removes a name makes this fail: add the new name to the shape, or
 // move a removed one to the shape's `older` list, and run `npm run shapes`. The
-// same goes for the strings a value can be, which a shape lists in `values`. A new
-// export with names of its own fails it too, until it has a shape or a line in
-// LEFT_OUT, in scripts/typeReader.ts, that says why it has none.
+// same goes for the strings a value can be, which a shape lists in `values`, with
+// the removed ones in `olderValues`. A new export with names of its own fails it
+// too, until it has a shape or a line in LEFT_OUT, in scripts/typeReader.ts, that
+// says why it has none.
 //   npm test
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { generateShapes, OUTPUT_FILE } from '../scripts/generateShapes.ts';
 import {
   checker,
@@ -31,9 +33,10 @@ import {
 } from '../scripts/typeReader.ts';
 import {
   HAND_SHAPES,
+  hasMember,
   MODULE_SHAPES,
   OWN_DIRECTIVES,
-  type Shape,
+  resolveShape,
   type ShapeRef,
   SHAPES,
   SVELTE_OPTIONS,
@@ -53,15 +56,6 @@ const handTypes = new Map(
     return [name, new Set(names.filter(isWrittenName))];
   }),
 );
-
-function resolveShape(ref: ShapeRef | null | undefined): Shape | null {
-  return typeof ref === 'string' ? (SHAPES[ref] ?? null) : (ref ?? null);
-}
-
-function hasMember(shape: Shape | null, name: string): boolean {
-  if (!shape) return false;
-  return Boolean(shape.anyMember) || Object.hasOwn(shape.members ?? {}, name) || Boolean(shape.older?.includes(name));
-}
 
 // Every shape that a shape, a module or a SvelteKit file points at by name.
 function namedShapes(ref: ShapeRef | null | undefined): string[] {
@@ -149,9 +143,13 @@ function findGaps(
     if (items.length > 0) gaps.set(position, new Set([...(gaps.get(position) ?? []), ...items]));
   };
 
-  const strings = fixedValues(types).join(', ');
-  const listed = [...new Set(shape?.values ?? [])].sort().join(', ');
-  if (strings !== listed) note([`values ${strings || 'none'}, not ${listed || 'none'}`]);
+  const strings = fixedValues(types);
+  const listed = [...new Set(shape?.values ?? [])].sort();
+  if (strings.join() !== listed.join()) {
+    note([`values ${strings.join(', ') || 'none'}, not ${listed.join(', ') || 'none'}`]);
+  }
+  const back = (shape?.olderValues ?? []).filter((value) => strings.includes(value));
+  note(back.map((value) => `${value} is current again, so it belongs in values`));
 
   const items = kinds.filter(isArray).flatMap(itemTypes);
   if (items.length > 0) findGaps(items, shape?.items, `${position}[]`, gaps, seen, depth + 1);
@@ -249,14 +247,16 @@ function literalsIn(node: ts.Node): string[] {
 }
 
 test('the page options list the same strings as SvelteKit', () => {
-  const kit = new URL('../node_modules/@sveltejs/kit/src/types/private.d.ts', import.meta.url);
-  const path = kit.pathname;
+  const path = fileURLToPath(new URL('../node_modules/@sveltejs/kit/src/types/private.d.ts', import.meta.url));
   assert.deepEqual(PRERENDER.values, literalsIn(kitTypeAlias(path, 'PrerenderOption')).sort());
   assert.deepEqual(TRAILING_SLASH.values, literalsIn(kitTypeAlias(path, 'TrailingSlash')).sort());
 });
 
+// SvelteKit keeps the link options in its code rather than in its types, so this
+// reads a file that isn't part of its public API. A SvelteKit update that moves or
+// renames `valid_link_options` fails it, and CONTRIBUTING.md says what to do then.
 test('the link options list the same values as SvelteKit', () => {
-  const path = new URL('../node_modules/@sveltejs/kit/src/runtime/client/utils.js', import.meta.url).pathname;
+  const path = fileURLToPath(new URL('../node_modules/@sveltejs/kit/src/runtime/client/utils.js', import.meta.url));
   const file = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true);
   let found: ts.ObjectLiteralExpression | undefined;
   const search = (node: ts.Node) => {
@@ -278,12 +278,14 @@ test('the link options list the same values as SvelteKit', () => {
   );
   const ours = Object.fromEntries(
     Object.entries(LINK_OPTIONS)
-      .filter(([, option]) => option.values.length > 0)
+      .filter(([, option]) => (option.values?.length ?? 0) > 0)
       .map(([name, option]) => [name, option.values]),
   );
   assert.deepEqual(ours, kit);
   for (const [name, option] of Object.entries(LINK_OPTIONS)) {
-    for (const value of option.older ?? []) assert.ok(!kit[name]?.includes(value), `${name}="${value}" is current again`);
+    for (const value of option.olderValues ?? []) {
+      assert.ok(!kit[name]?.includes(value), `${name}="${value}" is current again`);
+    }
   }
 });
 
