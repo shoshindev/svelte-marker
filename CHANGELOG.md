@@ -3,6 +3,7 @@
 ## 0.0.9 (2026-11-10)
 
 - Works in Restricted Mode, which VS Code uses for folders you haven't marked as trusted. The extension only reads your files and never runs code from them, so it doesn't need that trust.
+- New icon: an S with a violet highlighter swipe, in the color of the marks.
 
 ## 0.0.8 (2026-11-10)
 

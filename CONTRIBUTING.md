@@ -48,7 +48,7 @@ code --install-extension svelte-marker-0.0.9.vsix
 
 Or open the Extensions view, click the **...** menu at the top, and choose **Install from VSIX**.
 
-`images/icon.png` is a 256px render of `images/icon.svg`. Marketplace icons can't be SVG, so export it again after changing the SVG.
+`images/icon.png` is a 256px render of `images/icon.svg`. Marketplace icons can't be SVG, so export it again after changing the SVG. The S in the icon is the letter from Inter Extra Bold, converted to a path, so it looks the same without the font installed.
 
 `images/screenshot-dark.png` and `images/screenshot-light.png` are the README's screenshots, taken in VS Code on the Dark Modern and Light Modern themes. Take them again when a change to the marks would show in them. `.vscodeignore` keeps them out of the `.vsix`, and the Marketplace loads them from GitHub instead, so push them before publishing.
 
