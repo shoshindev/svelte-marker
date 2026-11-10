@@ -24,6 +24,16 @@ npm run check
 npm test
 ```
 
+## Check real projects
+
+The tests use small examples. To see how the marks do on real code, run the marker over one or more project folders:
+
+```bash
+npm run audit-marks -- ../my-app
+```
+
+It prints every distinct piece of text that got a mark, then the lines that look like Svelte syntax but got none, then the slowest files. In the first list, look for names that aren't Svelte's and for marks that run past their token. Comments and strings show up among the unmarked lines, because the marker leaves them alone on purpose. Run it after changing the marking rules or updating Svelte, on projects that use what you changed. The [svelte.dev](https://github.com/sveltejs/svelte.dev) repository is a good one to try, because its tutorial covers most of Svelte and SvelteKit.
+
 ## Package
 
 ```bash

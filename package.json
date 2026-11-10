@@ -52,6 +52,7 @@
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/findMarks.test.ts test/svelteNames.test.ts",
     "vsix": "vsce package --no-dependencies",
     "shapes": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generateShapes.ts",
+    "audit-marks": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/audit.ts",
     "vscode:prepublish": "node notices.mjs && node esbuild.mjs --production"
   },
   "devDependencies": {
