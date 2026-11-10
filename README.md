@@ -74,7 +74,7 @@ The marks use violet, `#8B5CF6`, at 18% opacity on light themes and 26% on dark.
 
 The last two digits set the opacity. Keep it low, or the mark will hide the text.
 
-Against VS Code's ten built-in themes, text under the default marks meets the WCAG AA contrast ratio of 4.5:1 only on the two high contrast themes. The lowest is 3.6:1, for `svelte-ignore` and `@component` in comments. Themes with dimmer text colors score lower.
+Any tint behind text lowers its contrast. On VS Code's two high contrast themes, text under a mark still meets the WCAG AA ratio of 4.5:1. On the other eight built-in themes it falls below that, and no visible tint could keep it there. Their comment colors sit just above 4.5:1 on a plain background, so on most of them the mark would have to drop below 10% opacity, and on Light 2026 to 1%, which is too faint to see. Instead, the mark costs less contrast than VS Code's own highlights. On all eight, text under a mark keeps more contrast than under a selection, and on six of them more than under a search match or a highlighted word. The lowest ratio is 3.6:1, for `svelte-ignore` and `@component` in a comment on Light 2026. Themes with dimmer text colors score lower.
 
 ## Known limits
 
