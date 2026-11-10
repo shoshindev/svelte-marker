@@ -17,3 +17,4 @@ docs/**
 .npmrc
 scripts/**
 images/screenshot-*.png
+.github/**

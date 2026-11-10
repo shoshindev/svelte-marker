@@ -48,11 +48,22 @@ code --install-extension svelte-marker-0.0.9.vsix
 
 Or open the Extensions view, click the **...** menu at the top, and choose **Install from VSIX**.
 
-For a release, raise `version` in `package.json` and add a section for it at the top of `CHANGELOG.md`. The Marketplace shows that file in the extension's Changelog tab.
-
 `images/icon.png` is a 256px render of `images/icon.svg`. Marketplace icons can't be SVG, so export it again after changing the SVG.
 
 `images/screenshot-dark.png` and `images/screenshot-light.png` are the README's screenshots, taken in VS Code on the Dark Modern and Light Modern themes. Take them again when a change to the marks would show in them. `.vscodeignore` keeps them out of the `.vsix`, and the Marketplace loads them from GitHub instead, so push them before publishing.
+
+## Release
+
+1. Raise `version` in `package.json` and add a section for it at the top of `CHANGELOG.md`. The Marketplace shows that file in the extension's Changelog tab.
+2. Commit and push to `main`.
+3. Push a tag named after the version:
+
+   ```bash
+   git tag v0.0.10
+   git push origin v0.0.10
+   ```
+
+The tag starts the Publish workflow in `.github/workflows/publish.yml`. It stops if the tag doesn't match `version`, runs the typecheck and tests, and publishes to the Marketplace. The Marketplace accepts the upload because the publisher's Trusted Publishing settings name this repository and workflow, so no access token is stored anywhere. To try the workflow without publishing, run it from the repository's Actions tab. It then packages the extension and stops.
 
 ## Updating Svelte
 

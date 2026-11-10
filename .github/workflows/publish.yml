@@ -1,0 +1,50 @@
+name: Publish
+
+# Pushing a tag like v0.0.9 publishes that version to the VS Code Marketplace.
+# Running the workflow by hand from the Actions tab does every step except the upload.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets the job prove to the Marketplace that it runs in this repository (trusted publishing).
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check that the tag matches the version in package.json
+        if: github.event_name == 'push'
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "The tag is $GITHUB_REF_NAME, but package.json says $version."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          # setup-node advises against caching in a job that can publish.
+          package-manager-cache: false
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+      - name: Package without publishing
+        if: github.event_name != 'push'
+        run: npx vsce package --no-dependencies
+
+      - name: Publish to the Marketplace
+        if: github.event_name == 'push'
+        run: npx vsce publish --no-dependencies --oidc
