@@ -193,6 +193,7 @@
 <section>
   <input bind:value={name} bind:this={input} />
   <p class:active={count > 0} class:double style:color="tomato" style:--size="2px">Class and style</p>
+  <p class={['card', { active: count > 0 }]}>Class as an array and an object</p>
   <p use:tooltip={'Hello'}>Action</p>
   <p transition:fade>Transition</p>
   <p transition:fade|global>Transition with a modifier</p>

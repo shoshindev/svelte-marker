@@ -32,7 +32,7 @@ Marks also appear in Restricted Mode, which VS Code uses for folders you haven't
 
 | Group | Examples |
 |---|---|
-| Expressions | the braces in `{count}`, `onclick={go}` and `title="{name}"`, and `{...` and `}` in `{...rest}` |
+| Expressions | the braces in `{count}`, `onclick={go}` and `title="{name}"`, `{...` and `}` in `{...rest}`, and the brackets of an object or array in `class` on an element, like the inner `{}` in `class={{ active }}` and the `[]` in `class={['card', size]}` |
 | Components | `<Card`, `>`, `/>` and `</Card>`, and `--size` in `<Card --size="2px">` |
 | Runes | `$state`, `$derived.by`, `$effect.pre`, `$props.id`, `$inspect(...).with`, and their `()` |
 | Blocks and tags | `{#if`, `{:else}`, `{/if}`, `{@render`, `{@attach`, `{let`, `{const`, the `()` in `{@render row()}` |

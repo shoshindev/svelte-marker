@@ -110,6 +110,10 @@ test('marks exactly the expected pieces of the modern sample', () => {
     'out:fade',
     'animate:flip',
 
+    // An array in class={...}, around an object whose braces are already listed
+    '[',
+    ']',
+
     // Special elements
     '<svelte:options',
     '<svelte:head',
@@ -664,6 +668,28 @@ test('marks spreads and the braces after directives', () => {
     '}',
   ]);
   assertUnmarked(source, '{ y: 8 }');
+});
+
+test('marks the brackets of an object or array in class on an element, but not the class names inside', () => {
+  const object = '<a class={{ featured: project.featured }}>x</a>';
+  assert.deepEqual(markedText(object), ['{', '{', '}', '}']);
+  assertUnmarked(object, 'featured: project.featured');
+
+  const nested = `<p class={['card', { on }, wide ? ['a'] : 'b', on && { c: on }, x || { d: on }]}></p>`;
+  assert.deepEqual(new Set(markedText(nested)), new Set(['{', '}', '[', ']']));
+  assert.equal(markedText(nested).length, 12);
+  assertUnmarked(nested, `'card'`);
+
+  const typed = '<script lang="ts">let on = true;</script><p class={{ a: on } satisfies object}></p>';
+  assert.equal(markedText(typed).length, 4);
+  assertUnmarked(typed, 'satisfies object');
+  assert.equal(markedText('<svelte:element this="p" class={{ a: on }} />').filter((piece) => piece === '{').length, 2);
+
+  // Svelte reads these as they are: a component gets the object as a prop, and a
+  // quoted value is text.
+  assert.deepEqual(markedText('<Card class={{ a: on }} />'), ['<Card', '{', '}', '/>']);
+  assert.deepEqual(markedText('<p class="{ { a: on } }"></p>'), ['{', '}']);
+  assert.deepEqual(markedText('<p class={name}></p>'), ['{', '}']);
 });
 
 test('marks component names in both tags, and CSS variables passed to them', () => {

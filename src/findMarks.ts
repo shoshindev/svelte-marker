@@ -720,6 +720,29 @@ function marksIn(text: string, options: ParseOptions): Mark[] | null {
       add(node.start, node.start + 1);
       add(endOf(node) - 1, endOf(node));
     }
+    // Svelte only does this for an unquoted value, as in `class={x}`.
+    const isClassValue = node.name === 'class' && node.value !== true && !Array.isArray(node.value);
+    if (isClassValue && ELEMENT_NODES.has(parent?.type ?? '')) markClassValue(node.value.expression);
+  }
+
+  // On an element, Svelte turns an object or array in `class={...}` into class
+  // names, so `{ featured: on }` adds `featured` while `on` is true. Plain HTML
+  // would read it as "[object Object]", so its brackets get a mark. The class
+  // names and conditions inside are yours. Arrays can hold more of both.
+  function markClassValue(value: Node | null) {
+    const inner = withoutWrappers(value);
+    if (inner?.type === 'ObjectExpression' || inner?.type === 'ArrayExpression') {
+      add(inner.start, inner.start + 1);
+      add(inner.end - 1, inner.end);
+      if (inner.type === 'ArrayExpression') for (const item of inner.elements) markClassValue(item);
+    } else if (inner?.type === 'ConditionalExpression') {
+      markClassValue(inner.consequent);
+      markClassValue(inner.alternate);
+    } else if (inner?.type === 'LogicalExpression') {
+      // An object is never falsy, so the left of && never becomes the value.
+      if (inner.operator !== '&&') markClassValue(inner.left);
+      markClassValue(inner.right);
+    }
   }
 
   // Marks `this` and any braces in <svelte:element this={tag}>. They aren't
