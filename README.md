@@ -18,6 +18,8 @@ You need VS Code 1.100 or newer. Search for **Svelte Marker** in the Extensions 
 code --install-extension shoshindev.svelte-marker
 ```
 
+VSCodium, Cursor and other editors built on VS Code install it the same way, from [Open VSX](https://open-vsx.org/extension/shoshindev/svelte-marker).
+
 [Svelte for VS Code](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) installs along with it if you don't have it yet. It's what tells VS Code that a `.svelte` file is Svelte, so Svelte Marker can't run without it.
 
 To install a build of this repository instead, see [Package](CONTRIBUTING.md#package) in CONTRIBUTING.
