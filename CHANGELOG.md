@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.10 (2026-11-11)
+
+- Marks the brackets of an object or array in `class` on an element, like the inner `{}` in `class={{ active }}` and the `[]` in `class={['card', size]}`, because Svelte turns them into class names.
+
 ## 0.0.9 (2026-11-10)
 
 - Works in Restricted Mode, which VS Code uses for folders you haven't marked as trusted. The extension only reads your files and never runs code from them, so it doesn't need that trust.

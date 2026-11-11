@@ -40,10 +40,10 @@ It prints every distinct piece of text that got a mark, then the lines that look
 npm run vsix
 ```
 
-This creates `svelte-marker-0.0.9.vsix`. It also rewrites `THIRD-PARTY-NOTICES.md`, so commit that file if it changes. To install it in VS Code, run:
+This creates `svelte-marker-0.0.10.vsix`. It also rewrites `THIRD-PARTY-NOTICES.md`, so commit that file if it changes. To install it in VS Code, run:
 
 ```bash
-code --install-extension svelte-marker-0.0.9.vsix
+code --install-extension svelte-marker-0.0.10.vsix
 ```
 
 Or open the Extensions view, click the **...** menu at the top, and choose **Install from VSIX**.
@@ -59,8 +59,8 @@ Or open the Extensions view, click the **...** menu at the top, and choose **Ins
 3. Push a tag named after the version:
 
    ```bash
-   git tag v0.0.10
-   git push origin v0.0.10
+   git tag v0.0.11
+   git push origin v0.0.11
    ```
 
 The tag starts the Publish workflow in `.github/workflows/publish.yml`. It stops if the tag doesn't match `version`, runs the typecheck and tests, and publishes to the Marketplace. The Marketplace accepts the upload because the publisher's Trusted Publishing settings name this repository and workflow, so no access token is stored anywhere. To try the workflow without publishing, run it from the repository's Actions tab. It then packages the extension and stops.

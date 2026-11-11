@@ -2,7 +2,7 @@
   "name": "svelte-marker",
   "displayName": "Svelte Marker",
   "description": "Highlighter-style marks behind Svelte and SvelteKit syntax and names, so you can tell them apart from plain JavaScript, HTML and CSS.",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "shoshindev",
   "license": "MIT",
   "icon": "images/icon.png",
