@@ -1,11 +1,17 @@
 name: Publish
 
-# Pushing a tag like v0.0.9 publishes that version to the VS Code Marketplace.
-# Running the workflow by hand from the Actions tab does every step except the upload.
+# Pushing a tag like v0.0.10 publishes that version to the VS Code Marketplace and to Open VSX.
+# Running the workflow by hand from the Actions tab packages the extension and stops,
+# unless you tick "publish", which publishes the version on main to each store that doesn't have it yet.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the version in package.json to each store that doesn't have it yet. Only on main, and only for a version that already has a tag.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,8 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Lets the job prove to the Marketplace that it runs in this repository (trusted publishing).
+      # Lets the job prove to the Marketplace and to Open VSX that it runs in this repository (trusted publishing).
       id-token: write
+    env:
+      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,6 +39,19 @@ jobs:
             exit 1
           fi
 
+      - name: Check that a run from the Actions tab publishes a tagged version from main
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "Publishing from the Actions tab works only on main, but this run is on $GITHUB_REF_NAME."
+            exit 1
+          fi
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$version" > /dev/null; then
+            echo "package.json says $version, but there's no tag $version. Push the tag instead, which publishes it."
+            exit 1
+          fi
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -41,10 +62,15 @@ jobs:
       - run: npm run check
       - run: npm test
 
-      - name: Package without publishing
-        if: github.event_name != 'push'
-        run: npx vsce package --no-dependencies
+      # Both stores get this same file.
+      - name: Package
+        run: npx vsce package --no-dependencies --out svelte-marker.vsix
 
+      # --skip-duplicate skips a store that already has this version, so a run that failed partway can be run again.
       - name: Publish to the Marketplace
-        if: github.event_name == 'push'
-        run: npx vsce publish --no-dependencies --oidc
+        if: env.PUBLISH == 'true'
+        run: npx vsce publish --packagePath svelte-marker.vsix --oidc --skip-duplicate
+
+      - name: Publish to Open VSX
+        if: env.PUBLISH == 'true'
+        run: npx ovsx publish svelte-marker.vsix --trusted-publishing --skip-duplicate

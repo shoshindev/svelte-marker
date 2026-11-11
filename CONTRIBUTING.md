@@ -63,7 +63,9 @@ Or open the Extensions view, click the **...** menu at the top, and choose **Ins
    git push origin v0.0.11
    ```
 
-The tag starts the Publish workflow in `.github/workflows/publish.yml`. It stops if the tag doesn't match `version`, runs the typecheck and tests, and publishes to the Marketplace. The Marketplace accepts the upload because the publisher's Trusted Publishing settings name this repository and workflow, so no access token is stored anywhere. To try the workflow without publishing, run it from the repository's Actions tab. It then packages the extension and stops.
+The tag starts the Publish workflow in `.github/workflows/publish.yml`. It stops if the tag doesn't match `version`, runs the typecheck and tests, packages the extension once, and publishes that file to the VS Code Marketplace and to [Open VSX](https://open-vsx.org/extension/shoshindev/svelte-marker), the store that VSCodium, Cursor and other VS Code forks install from. Both stores accept the upload because their trusted publisher settings name this repository and workflow, so no access token is stored anywhere.
+
+To try the workflow without publishing, run it from the repository's Actions tab. It then packages the extension and stops. If a release reached one store but not the other, re-run the failed run from its page, or run the workflow from the Actions tab on `main` with **publish** ticked. Either way, a store that already has the version is skipped.
 
 ## Updating Svelte
 
