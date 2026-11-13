@@ -1,3 +1,5 @@
+<img src="images/icon.png" width="96" alt="">
+
 # Svelte Marker
 
 Paints a translucent violet mark, like a highlighter's, behind Svelte and SvelteKit syntax and names, so you can tell them apart from plain HTML, JS and CSS at a glance.
